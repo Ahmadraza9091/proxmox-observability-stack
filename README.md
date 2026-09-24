@@ -205,7 +205,7 @@ Prometheus → Alertmanager → OpsKnight (local container, :3000/:3001)
 | **Grafana** | Web dashboards and visualizations | `3000` (remap if OpsKnight also uses 3000) | Monitoring server |
 | **Alertmanager** | Groups, routes, fires, and resolves alerts | `9093` | Monitoring server |
 | **OpsKnight (app)** | Next.js app: incident creation, on-call scheduling, escalation, Slack ChatOps, status pages | `3000` (container) → map to a free host port | Monitoring server, **local Docker container** |
-| **OpsKnight (PostgreSQL)** | Stores incidents, schedules, users, integration credentials (encrypted) | `5432` (internal to Docker network) | Monitoring server, local Docker container |
+| **OpsKnight (PostgreSQL)** | Stores incidents, schedules, users, integration credentials (encrypted) | `3001` (internal to Docker network) | Monitoring server, local Docker container |
 | **Slack** | Incident ChatOps war room + notifications, via OpsKnight's own Slack app | N/A | Cloud (only Slack itself, not incident data) |
 | **Ansible** | Installs and configures Alloy on servers | N/A | Admin machine |
 
