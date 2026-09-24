@@ -1,0 +1,13 @@
+prometheus.exporter.unix "local_system" {
+}
+
+prometheus.scrape "scrape_metrics" {
+  targets    = prometheus.exporter.unix.local_system.targets
+  forward_to = [prometheus.remote_write.to_prometheus.receiver]
+}
+
+prometheus.remote_write "to_prometheus" {
+  endpoint {
+    url = "http://prometheus:9090/api/v1/write"
+  }
+}

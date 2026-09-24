@@ -1,0 +1,27 @@
+{{ define "slack.title" }}
+{{ if eq .Status "firing" }}🚨 ALERT FIRING{{ else }}✅ ALERT RESOLVED{{ end }} — Production Monitoring
+{{ end }}
+
+{{ define "slack.text" }}
+{{ range .Alerts }}
+
+*Alert:* {{ .Labels.alertname }}
+*Severity:* {{ .Labels.severity | toUpper }}
+*Server:* {{ .Labels.instance }}
+
+{{ if .Annotations.summary }}
+*Summary:* {{ .Annotations.summary }}
+{{ end }}
+
+{{ if .Annotations.description }}
+*Description:* {{ .Annotations.description }}
+{{ end }}
+
+{{ if eq .Status "resolved" }}
+*Status:* 🟢 RESOLVED
+{{ else }}
+*Status:* 🔴 FIRING
+{{ end }}
+
+{{ end }}
+{{ end }}

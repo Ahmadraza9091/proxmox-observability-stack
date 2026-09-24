@@ -1,0 +1,604 @@
+groups:
+
+  # ============================================================
+  # SERVER / SYSTEM ALERTS
+  # ============================================================
+
+  - name: server-alerts
+    rules:
+
+      # ----------------------------------------------------------
+      # SERVER 1 DOWN
+      # ----------------------------------------------------------
+      - alert: Server1Down
+        expr: absent(node_uname_info{instance="ip-10-20-136-233"})
+        for: 3m
+        labels:
+          severity: critical
+          service: server
+          server: server1
+          instance: ip-10-20-136-233
+        annotations:
+          summary: "Server 1 is down"
+          description: "Server 1 (ip-10-20-136-233) has stopped reporting metrics for more than 3 minutes."
+
+      # ----------------------------------------------------------
+      # SERVER 2 DOWN
+      # ----------------------------------------------------------
+      - alert: Server2Down
+        expr: absent(node_uname_info{instance="ip-10-20-142-4"})
+        for: 3m
+        labels:
+          severity: critical
+          service: server
+          server: server2
+          instance: ip-10-20-142-4
+        annotations:
+          summary: "Server 2 is down"
+          description: "Server 2 (ip-10-20-142-4) has stopped reporting metrics for more than 3 minutes."
+
+      # ----------------------------------------------------------
+      # CPU WARNING
+      # ----------------------------------------------------------
+      - alert: HighCPUUsage
+        expr: |
+          100 * (
+            1 - avg by (instance) (
+              rate(node_cpu_seconds_total{mode="idle"}[5m])
+            )
+          ) > 80
+        for: 10m
+        labels:
+          severity: warning
+          service: server
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage has been above 80% for more than 10 minutes."
+
+      # ----------------------------------------------------------
+      # CPU CRITICAL
+      # ----------------------------------------------------------
+      - alert: CriticalCPUUsage
+        expr: |
+          100 * (
+            1 - avg by (instance) (
+              rate(node_cpu_seconds_total{mode="idle"}[5m])
+            )
+          ) > 90
+        for: 5m
+        labels:
+          severity: critical
+          service: server
+        annotations:
+          summary: "Critical CPU usage on {{ $labels.instance }}"
+          description: "CPU usage has been above 90% for more than 5 minutes."
+
+      # ----------------------------------------------------------
+      # MEMORY WARNING
+      # ----------------------------------------------------------
+      - alert: HighMemoryUsage
+        expr: |
+          100 * (
+            1 -
+            (
+              node_memory_MemAvailable_bytes
+              /
+              node_memory_MemTotal_bytes
+            )
+          ) > 80
+        for: 10m
+        labels:
+          severity: warning
+          service: server
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage has been above 80% for more than 10 minutes."
+
+      # ----------------------------------------------------------
+      # MEMORY CRITICAL
+      # ----------------------------------------------------------
+      - alert: CriticalMemoryUsage
+        expr: |
+          100 * (
+            1 -
+            (
+              node_memory_MemAvailable_bytes
+              /
+              node_memory_MemTotal_bytes
+            )
+          ) > 90
+        for: 5m
+        labels:
+          severity: critical
+          service: server
+        annotations:
+          summary: "Critical memory usage on {{ $labels.instance }}"
+          description: "Memory usage has been above 90% for more than 5 minutes."
+
+      # ----------------------------------------------------------
+      # DISK WARNING
+      # ----------------------------------------------------------
+      - alert: HighDiskUsage
+        expr: |
+          100 * (
+            1 -
+            (
+              node_filesystem_avail_bytes{
+                mountpoint="/",
+                fstype!~"tmpfs|overlay"
+              }
+              /
+              node_filesystem_size_bytes{
+                mountpoint="/",
+                fstype!~"tmpfs|overlay"
+              }
+            )
+          ) > 80
+        for: 10m
+        labels:
+          severity: warning
+          service: filesystem
+        annotations:
+          summary: "High disk usage on {{ $labels.instance }}"
+          description: "Root filesystem usage has exceeded 80%."
+
+      # ----------------------------------------------------------
+      # DISK CRITICAL
+      # ----------------------------------------------------------
+      - alert: CriticalDiskUsage
+        expr: |
+          100 * (
+            1 -
+            (
+              node_filesystem_avail_bytes{
+                mountpoint="/",
+                fstype!~"tmpfs|overlay"
+              }
+              /
+              node_filesystem_size_bytes{
+                mountpoint="/",
+                fstype!~"tmpfs|overlay"
+              }
+            )
+          ) > 90
+        for: 5m
+        labels:
+          severity: critical
+          service: filesystem
+        annotations:
+          summary: "Critical disk usage on {{ $labels.instance }}"
+          description: "Root filesystem usage has exceeded 90%."
+
+      # ----------------------------------------------------------
+      # SYSTEM LOAD WARNING
+      # ----------------------------------------------------------
+      - alert: HighSystemLoad
+        expr: |
+          node_load1 >
+          count by (instance) (
+            node_cpu_seconds_total{mode="idle"}
+          )
+        for: 10m
+        labels:
+          severity: warning
+          service: server
+        annotations:
+          summary: "High system load on {{ $labels.instance }}"
+          description: "1-minute system load is higher than the available CPU core count."
+
+      # ----------------------------------------------------------
+      # SYSTEM LOAD CRITICAL
+      # ----------------------------------------------------------
+      - alert: CriticalSystemLoad
+        expr: |
+          node_load1 >
+          2 *
+          count by (instance) (
+            node_cpu_seconds_total{mode="idle"}
+          )
+        for: 5m
+        labels:
+          severity: critical
+          service: server
+        annotations:
+          summary: "Critical system load on {{ $labels.instance }}"
+          description: "1-minute system load is more than twice the available CPU core count."
+
+      # ----------------------------------------------------------
+      # SWAP WARNING
+      # ----------------------------------------------------------
+      - alert: HighSwapUsage
+        expr: |
+          (
+            1 -
+            (
+              node_memory_SwapFree_bytes
+              /
+              node_memory_SwapTotal_bytes
+            )
+          ) * 100 > 80
+          and
+          node_memory_SwapTotal_bytes > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: server
+        annotations:
+          summary: "High swap usage on {{ $labels.instance }}"
+          description: "Swap usage has exceeded 80% for more than 10 minutes."
+
+      # ----------------------------------------------------------
+      # INODE WARNING
+      # ----------------------------------------------------------
+      - alert: HighInodeUsage
+        expr: |
+          100 * (
+            1 -
+            (
+              node_filesystem_files_free{
+                mountpoint="/",
+                fstype!~"tmpfs|overlay"
+              }
+              /
+              node_filesystem_files{
+                mountpoint="/",
+                fstype!~"tmpfs|overlay"
+              }
+            )
+          ) > 80
+        for: 10m
+        labels:
+          severity: warning
+          service: filesystem
+        annotations:
+          summary: "High inode usage on {{ $labels.instance }}"
+          description: "Root filesystem inode usage has exceeded 80%."
+
+      # ----------------------------------------------------------
+      # MEMORY PRESSURE
+      # ----------------------------------------------------------
+      - alert: HighMemoryPressure
+        expr: |
+          (
+            node_memory_MemAvailable_bytes
+            /
+            node_memory_MemTotal_bytes
+          ) < 0.10
+        for: 5m
+        labels:
+          severity: critical
+          service: server
+        annotations:
+          summary: "Critical memory pressure on {{ $labels.instance }}"
+          description: "Less than 10% of system memory is available."
+
+
+  # ============================================================
+  # MYSQL ALERTS
+  # SERVER 1 ONLY
+  # ============================================================
+
+  - name: mysql-alerts
+    rules:
+
+      # ----------------------------------------------------------
+      # MYSQL DOWN - SERVER 1
+      # ----------------------------------------------------------
+      - alert: MySQLDownServer1
+        expr: |
+          (
+            mysql_up{instance="ip-10-20-136-233"} == 0
+          )
+          or
+          (
+            absent(mysql_up{instance="ip-10-20-136-233"})
+            and
+            absent(node_uname_info{instance="ip-10-20-136-233"}) == 0
+          )
+        for: 2m
+        labels:
+          severity: critical
+          service: mysql
+          server: server1
+          instance: ip-10-20-136-233
+        annotations:
+          summary: "MySQL is down on Server 1"
+          description: "MySQL on Server 1 is unavailable while Server 1 is still reporting system metrics."
+
+      # ----------------------------------------------------------
+      # MYSQL HIGH CONNECTIONS
+      # ----------------------------------------------------------
+      - alert: MySQLHighConnections
+        expr: |
+          (
+            mysql_global_status_threads_connected
+            /
+            mysql_global_variables_max_connections
+          ) * 100 > 80
+        for: 10m
+        labels:
+          severity: warning
+          service: mysql
+        annotations:
+          summary: "High MySQL connections on {{ $labels.instance }}"
+          description: "MySQL connections are above 80% of max_connections."
+
+      # ----------------------------------------------------------
+      # MYSQL CRITICAL CONNECTIONS
+      # ----------------------------------------------------------
+      - alert: MySQLCriticalConnections
+        expr: |
+          (
+            mysql_global_status_threads_connected
+            /
+            mysql_global_variables_max_connections
+          ) * 100 > 90
+        for: 5m
+        labels:
+          severity: critical
+          service: mysql
+        annotations:
+          summary: "Critical MySQL connections on {{ $labels.instance }}"
+          description: "MySQL connections are above 90% of max_connections."
+
+      # ----------------------------------------------------------
+      # MYSQL RUNNING THREADS
+      # ----------------------------------------------------------
+      - alert: MySQLHighRunningThreads
+        expr: mysql_global_status_threads_running > 50
+        for: 10m
+        labels:
+          severity: warning
+          service: mysql
+        annotations:
+          summary: "High MySQL running threads on {{ $labels.instance }}"
+          description: "More than 50 MySQL threads are currently running."
+
+      # ----------------------------------------------------------
+      # MYSQL SLOW QUERIES
+      # ----------------------------------------------------------
+      - alert: MySQLSlowQueries
+        expr: rate(mysql_global_status_slow_queries[5m]) > 1
+        for: 10m
+        labels:
+          severity: warning
+          service: mysql
+        annotations:
+          summary: "Slow MySQL queries detected on {{ $labels.instance }}"
+          description: "MySQL is generating more than 1 slow query per second."
+
+
+  # ============================================================
+  # PYTHON APPLICATION ALERTS
+  # SERVER 2 ONLY
+  # ============================================================
+
+  - name: python-alerts
+    rules:
+
+      # ----------------------------------------------------------
+      # PYTHON APPLICATION DOWN
+      # ----------------------------------------------------------
+      - alert: PythonApplicationDown
+        expr: |
+          (
+            python_app_up{job="python-app",server="server2"} == 0
+          )
+          or
+          (
+            absent(python_app_up{job="python-app"})
+            and
+            absent(node_uname_info{instance="ip-10-20-142-4"}) == 0
+          )
+        for: 2m
+        labels:
+          severity: critical
+          service: python-app
+          server: server2
+          instance: ip-10-20-142-4
+        annotations:
+          summary: "Python application is down on Server 2"
+          description: "The Promax Python application is unavailable while Server 2 is still reporting system metrics."
+
+      # ----------------------------------------------------------
+      # PYTHON METRICS ENDPOINT DOWN
+      # ----------------------------------------------------------
+      - alert: PythonMetricsEndpointDown
+        expr: |
+          (
+            up{job="python-app"} == 0
+          )
+          or
+          (
+            absent(up{job="python-app"})
+            and
+            absent(node_uname_info{instance="ip-10-20-142-4"}) == 0
+          )
+        for: 2m
+        labels:
+          severity: critical
+          service: python-app
+          server: server2
+          instance: ip-10-20-142-4
+        annotations:
+          summary: "Python metrics endpoint is down on Server 2"
+          description: "Prometheus cannot scrape the Python application's /metrics endpoint while Server 2 is still available."
+
+
+  # ============================================================
+  # DOCKER ALERTS
+  # SERVER 2 ONLY
+  # ============================================================
+
+  - name: docker-alerts
+    rules:
+
+      # ----------------------------------------------------------
+      # DOCKER MONITORING DOWN - SERVER 2
+      # ----------------------------------------------------------
+      - alert: DockerDownServer2
+        expr: |
+          absent(container_last_seen{
+            instance="ip-10-20-142-4",
+            job="integrations/cadvisor"
+          })
+          and
+          absent(node_uname_info{instance="ip-10-20-142-4"}) == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: docker
+          server: server2
+          instance: ip-10-20-142-4
+        annotations:
+          summary: "Docker monitoring is unavailable on Server 2"
+          description: "Server 2 is available, but no cAdvisor Docker/container metrics are being received."
+
+      # ----------------------------------------------------------
+      # DOCKER CONTAINER STALE
+      # ----------------------------------------------------------
+      - alert: DockerContainerStale
+        expr: |
+          time() - container_last_seen{
+            instance="ip-10-20-142-4",
+            job="integrations/cadvisor"
+          } > 120
+        for: 5m
+        labels:
+          severity: warning
+          service: docker
+          server: server2
+        annotations:
+          summary: "Docker container metrics stale on Server 2"
+          description: "Docker/cAdvisor container metrics have not been updated for more than 2 minutes."
+
+      # ----------------------------------------------------------
+      # DOCKER CPU HIGH
+      # ----------------------------------------------------------
+      - alert: DockerHighCPU
+        expr: |
+          (
+            sum by (instance, id) (
+              rate(container_cpu_usage_seconds_total{
+                instance="ip-10-20-142-4",
+                job="integrations/cadvisor"
+              }[5m])
+            ) * 100
+          ) > 80
+        for: 10m
+        labels:
+          severity: warning
+          service: docker
+          server: server2
+        annotations:
+          summary: "High Docker CPU usage on Server 2"
+          description: "A Docker/cgroup workload is consuming more than 80% CPU."
+
+      # ----------------------------------------------------------
+      # DOCKER MEMORY HIGH
+      # ----------------------------------------------------------
+      - alert: DockerHighMemory
+        expr: |
+          (
+            container_memory_usage_bytes{
+              instance="ip-10-20-142-4",
+              job="integrations/cadvisor"
+            }
+            /
+            container_spec_memory_limit_bytes{
+              instance="ip-10-20-142-4",
+              job="integrations/cadvisor"
+            }
+          ) * 100 > 80
+          and
+          container_spec_memory_limit_bytes{
+            instance="ip-10-20-142-4",
+            job="integrations/cadvisor"
+          } > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: docker
+          server: server2
+        annotations:
+          summary: "High Docker memory usage on Server 2"
+          description: "A Docker container is using more than 80% of its configured memory limit."
+
+
+  # ============================================================
+  # MONITORING STACK
+  # ============================================================
+
+  - name: monitoring-stack
+    rules:
+
+      - alert: PrometheusDown
+        expr: up{job="prometheus"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: prometheus
+        annotations:
+          summary: "Prometheus is down"
+          description: "Prometheus is no longer reporting itself as healthy."
+
+      - alert: AlertmanagerDown
+        expr: up{job="alertmanager"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: alertmanager
+        annotations:
+          summary: "Alertmanager is down"
+          description: "Alertmanager is not reachable by Prometheus."
+
+      - alert: PrometheusRemoteWriteFailures
+        expr: |
+          increase(prometheus_remote_storage_samples_failed_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: prometheus
+        annotations:
+          summary: "Prometheus remote write failures"
+          description: "Prometheus has failed to process remote-write samples during the last 5 minutes."
+
+
+  # ============================================================
+  # LOKI ALERTS
+  # ============================================================
+
+  - name: loki-alerts
+    rules:
+
+      - alert: LokiWriteErrors
+        expr: |
+          increase(loki_distributor_ingester_appends_failed_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: loki
+        annotations:
+          summary: "Loki ingestion errors"
+          description: "Loki has experienced failed log ingestion attempts."
+
+
+  # ============================================================
+  # CRITICAL MEMORY EVENTS
+  # ============================================================
+
+  - name: critical-events
+    rules:
+
+      - alert: SystemMemoryCritical
+        expr: |
+          node_memory_MemAvailable_bytes
+          <
+          node_memory_MemTotal_bytes * 0.05
+        for: 2m
+        labels:
+          severity: critical
+          service: server
+        annotations:
+          summary: "Extremely low available memory on {{ $labels.instance }}"
+          description: "Less than 5% system memory is available. Possible OOM risk."

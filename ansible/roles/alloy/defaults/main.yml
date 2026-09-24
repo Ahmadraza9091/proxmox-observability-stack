@@ -1,0 +1,16 @@
+---
+alloy_package: alloy
+
+alloy_config_path: /etc/alloy/config.alloy
+
+alloy_listen_addr: "0.0.0.0:12345"
+
+prometheus_remote_write_url: "http://127.0.0.1:19090/api/v1/write"
+
+loki_write_url: "http://127.0.0.1:13100/loki/api/v1/push"
+
+python_metrics_url: "http://127.0.0.1:5000/metrics"
+
+docker_socket: "unix:///var/run/docker.sock"
+
+alloy_docker_user: alloy

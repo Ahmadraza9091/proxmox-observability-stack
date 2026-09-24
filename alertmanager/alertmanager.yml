@@ -1,0 +1,33 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by:
+    - alertname
+    - instance
+    - severity
+
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 5m
+
+  receiver: opsknight-warning
+
+  routes:
+    - matchers:
+        - severity="critical"
+      receiver: opsknight-critical
+
+receivers:
+  - name: opsknight-warning
+    webhook_configs:
+      - url: 'https://password-same-unplowed.ngrok-free.dev/api/integrations/prometheus?integrationId=cmubjpyw9014swdlqfq9o2ilg&integrationKey=17f47892c1d1bf9f3672bd2a1a2f35d7'
+        send_resolved: true
+
+  - name: opsknight-critical
+    webhook_configs:
+      - url: 'https://password-same-unplowed.ngrok-free.dev/api/integrations/prometheus?integrationId=cmubjpyw9014swdlqfq9o2ilg&integrationKey=17f47892c1d1bf9f3672bd2a1a2f35d7'
+        send_resolved: true
+
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'

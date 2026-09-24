@@ -1,0 +1,96 @@
+---
+- name: Install prerequisites
+  ansible.builtin.apt:
+    name:
+      - gpg
+      - wget
+      - curl
+    state: present
+    update_cache: true
+
+- name: Check whether Docker is installed
+  ansible.builtin.command:
+    cmd: docker --version
+  register: docker_check
+  failed_when: false
+  changed_when: false
+
+- name: Set Docker detection fact
+  ansible.builtin.set_fact:
+    docker_present: "{{ docker_check.rc == 0 }}"
+
+- name: Check whether Nginx is installed/running
+  ansible.builtin.service_facts:
+
+- name: Set Nginx detection fact
+  ansible.builtin.set_fact:
+    nginx_present: "{{ 'nginx.service' in ansible_facts.services }}"
+
+- name: Check Python application metrics endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:5000/metrics"
+    method: GET
+    status_code: 200
+    timeout: 5
+  register: python_metrics_check
+  failed_when: false
+  changed_when: false
+
+- name: Set Python application detection fact
+  ansible.builtin.set_fact:
+    python_app_present: "{{ python_metrics_check.status | default(0) == 200 }}"
+
+- name: Create Grafana keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Download Grafana GPG key
+  ansible.builtin.get_url:
+    url: https://apt.grafana.com/gpg-full.key
+    dest: /etc/apt/keyrings/grafana.asc
+    mode: '0644'
+
+- name: Add Grafana repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main"
+    filename: grafana
+    state: present
+    update_cache: true
+
+- name: Install Grafana Alloy
+  ansible.builtin.apt:
+    name: "{{ alloy_package }}"
+    state: present
+
+- name: Add Alloy user to Docker group
+  ansible.builtin.user:
+    name: "{{ alloy_docker_user }}"
+    groups: docker
+    append: true
+  when: docker_present
+  notify: Restart Alloy
+
+- name: Configure Alloy HTTP listen address
+  ansible.builtin.lineinfile:
+    path: /etc/default/alloy
+    regexp: '^CUSTOM_ARGS='
+    line: 'CUSTOM_ARGS="--server.http.listen-addr={{ alloy_listen_addr }}"'
+  notify: Restart Alloy
+
+- name: Deploy Alloy configuration
+  ansible.builtin.template:
+    src: config.alloy.j2
+    dest: "{{ alloy_config_path }}"
+    owner: root
+    group: alloy
+    mode: '0640'
+  notify: Restart Alloy
+
+- name: Enable and start Alloy
+  ansible.builtin.systemd:
+    name: alloy
+    enabled: true
+    state: started
+    daemon_reload: true

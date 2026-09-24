@@ -1,0 +1,168 @@
+services:
+
+  prometheus:
+    image: prom/prometheus:v3.13.2
+    container_name: prometheus
+    restart: always
+    user: "root"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-remote-write-receiver"
+    networks:
+      - proxmox-net
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: grafana
+    restart: always
+    user: "root"
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - proxmox-net
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    container_name: alertmanager
+    restart: always
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./alertmanager/templates:/etc/alertmanager/templates:ro
+      - alertmanager_data:/alertmanager
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    networks:
+      - proxmox-net
+
+  loki:
+    image: grafana/loki:3.5.0
+    container_name: loki
+    restart: always
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command:
+      - "-config.file=/etc/loki/local-config.yaml"
+    networks:
+      - proxmox-net
+
+  opsknight-db:
+    image: postgres:15-alpine
+    container_name: opsknight-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-opsknight}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-opsknight_secure_password_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-opsknight_db}
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=C"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - opsknight_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "pg_isready -U ${POSTGRES_USER:-opsknight} -d ${POSTGRES_DB:-opsknight_db}"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - proxmox-net
+
+  opsknight-app:
+    image: ${OPSKNIGHT_IMAGE:-ghcr.io/opsknight-labs/opsknight:1.4.0-hotfix}
+    container_name: opsknight-app
+    pull_policy: always
+    restart: unless-stopped
+
+    ports:
+      - "${APP_PORT:-3001}:3000"
+
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=512"
+
+      DATABASE_URL: ${OPSKNIGHT_DATABASE_URL:-postgresql://${POSTGRES_USER:-opsknight}:${POSTGRES_PASSWORD:-opsknight_secure_password_change_me}@opsknight-db:5432/${POSTGRES_DB:-opsknight_db}?sslmode=prefer&connection_limit=10&pool_timeout=10}
+
+      NEXTAUTH_URL: "https://password-same-unplowed.ngrok-free.dev"
+      NEXT_PUBLIC_APP_URL: "https://password-same-unplowed.ngrok-free.dev"
+
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-change_this_to_a_random_secret_in_production}
+
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08}
+
+      NOTIFICATION_CONTROL_PLANE_PERSONAL: ${NOTIFICATION_CONTROL_PLANE_PERSONAL:-true}
+
+      PROMETHEUS_SCRAPE_TOKEN: ${PROMETHEUS_SCRAPE_TOKEN:-}
+
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-xoxb-your-actual-bot-token}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-xapp-your-actual-app-token}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-your-actual-signing-secret}
+
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    depends_on:
+      opsknight-db:
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "require('http').get(
+          'http://localhost:3000/api/health?mode=readiness',
+          r => {
+          let data='';
+          r.on('data', c => data += c);
+          r.on('end', () => {
+          try {
+          const res = JSON.parse(data);
+          process.exit(res.status === 'healthy' ? 0 : 1);
+          } catch(e) {
+          process.exit(1);
+          }
+          });
+          }).on('error', () => process.exit(1));"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    networks:
+      - proxmox-net
+
+
+networks:
+  proxmox-net:
+    driver: bridge
+
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
+  loki_data:
+  opsknight_postgres_data:
