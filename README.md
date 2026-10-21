@@ -1,654 +1,320 @@
 # Proxmox Production Monitoring System
 
-[![Status](https://img.shields.io/badge/status-production-green?style=for-the-badge)](https://github.com)
+[![Status](https://img.shields.io/badge/status-production-green?style=for-the-badge)](https://github.com/Ahmadraza9091/proxmox-observability-stack)
 [![License](https://img.shields.io/badge/license-proprietary-blue?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-linux-orange?style=for-the-badge)](https://www.linux.org)
 [![Docker](https://img.shields.io/badge/docker-enabled-2496ED?style=for-the-badge&logo=docker)](https://www.docker.com)
+[![TLS](https://img.shields.io/badge/TLS-Nginx%20%2B%20Let's%20Encrypt-2dd4bf?style=for-the-badge&logo=letsencrypt)](#reverse-proxy-tls--domain)
 
-A **production-grade, centralized monitoring and alerting platform** for Proxmox on-premises servers with real-time dashboards, intelligent alerting, and incident management via a **self-hosted OpsKnight instance running locally in Docker** (no cloud/SaaS dependency).
+A centralized monitoring and alerting platform for Proxmox / on-premises servers. **Grafana Alloy** collects metrics and logs, **Prometheus**, **Loki** and **Grafana** store and visualize them, **Alertmanager** routes alerts, and a **self-hosted OpsKnight** container turns them into managed incidents. OpsKnight is published only through an **Nginx reverse proxy with TLS on your own domain**. No cloud or SaaS dependency for incident data.
 
-[Features](#features) • [Quick Start](#quick-start) • [Architecture](#architecture) • [Deployment](#deployment) • [Troubleshooting](#troubleshooting)
+![Alert workflow](screenshots/workflow.gif)
 
----
-
-## 📋 Table of Contents
-
-- [Overview](#overview)
-- [Features](#features)
-- [System Architecture](#system-architecture)
-- [Components](#components)
-- [Complete Workflow](#complete-workflow)
-- [System Diagrams (DFD / ERD / Use Case)](#system-diagrams-dfd--erd--use-case)
-- [Deployment Guide](#deployment-guide)
-- [Configuration](#configuration)
-- [Monitoring & Dashboards](#monitoring--dashboards)
-- [Alert / Incident Management (OpsKnight)](#alert--incident-management-opsknight)
-- [Troubleshooting](#troubleshooting)
-- [Security](#security)
-- [Quick Reference](#quick-reference)
+[Architecture](#architecture) • [Workflow](#workflow) • [Deployment](#deployment) • [Reverse proxy, TLS & domain](#reverse-proxy-tls--domain) • [Configuration](#configuration) • [Troubleshooting](#troubleshooting) • [Security](#security)
 
 ---
 
-## 📌 Overview
+## Contents
 
-> **Purpose:** A production-style, centralized monitoring and alerting platform for Proxmox/on-premises servers.
->
-> This document is written so that a **new engineer can understand the system from zero**, deploy it, test it, and troubleshoot it **without needing to know the original implementation history**.
-
-The Proxmox Monitoring System continuously watches:
-- 🖥️ Servers
-- 🐳 Containers & applications  
-- 💾 Databases & system resources
-- 📝 Logs & events
-
-When something goes wrong, the system automatically detects the problem and hands it off to **OpsKnight** — running as a **local Docker container on the monitoring server itself** — which turns it into a managed incident and notifies the on-call engineer.
-
-> **Note on this change:** Incident handling previously ran through a self-built Flask "Alert Action Service" that posted interactive messages to Slack and tracked state in a local JSON file. That component has been **removed and replaced by [OpsKnight](https://github.com/opsknight-labs/OpsKnight)**, an open-source, self-hosted incident management platform (Apache-2.0). OpsKnight is **not** a SaaS/cloud product here — it runs as its own Docker container (Next.js app + PostgreSQL) alongside the rest of the monitoring stack, on infrastructure you control. Alertmanager sends alerts directly to OpsKnight's built-in Prometheus integration endpoint, and OpsKnight owns notification, on-call scheduling, escalation, and resolution tracking — all data stays in your own PostgreSQL database.
+1. [Features](#features)
+2. [Architecture](#architecture)
+3. [Components](#components)
+4. [Workflow](#workflow)
+5. [Deployment](#deployment)
+6. [Reverse proxy, TLS & domain](#reverse-proxy-tls--domain)
+7. [Configuration](#configuration)
+8. [Dashboards & queries](#dashboards--queries)
+9. [Incident management (OpsKnight)](#incident-management-opsknight)
+10. [Troubleshooting](#troubleshooting)
+11. [Security](#security)
+12. [Repository structure](#repository-structure)
+13. [Quick reference](#quick-reference)
+14. [Production checklist](#production-checklist)
+15. [For new engineers](#for-new-engineers)
 
 ---
 
-## ✨ Features
+## Features
 
 | Feature | Description |
-|---------|-------------|
-| **🔍 Real-time Monitoring** | Continuous collection of metrics, logs, and system telemetry |
-| **📊 Rich Dashboards** | Pre-built Grafana dashboards for servers, containers, databases, and applications |
-| **🚨 Intelligent Alerting** | Rule-based alert evaluation with configurable thresholds and routing |
-| **🎯 Managed Incidents** | Alerts become tracked incidents in a **self-hosted OpsKnight instance** — acknowledge, assign, escalate, resolve |
-| **📱 Local OpsKnight Container** | OpsKnight runs on the monitoring server (`localhost:3000`), backed by its own PostgreSQL — no external SaaS call |
-| **🤖 Automated Escalation** | OpsKnight's on-call schedules + escalation policies replace manual Slack button handling |
-| **💬 Slack ChatOps (native)** | OpsKnight's own Slack app posts incident war rooms with interactive triage actions |
-| **🔐 Enterprise Security** | Role-based access, encrypted-at-rest integration credentials, and audit-ready logs |
-| **⚙️ Infrastructure as Code** | Ansible-driven deployment for consistency and repeatability |
+|---|---|
+| **Real-time monitoring** | Metrics, logs and system telemetry from every server via Grafana Alloy |
+| **Dashboards** | Grafana dashboards for servers, containers, MySQL, applications and logs |
+| **Rule-based alerting** | Prometheus rules with thresholds, `for:` durations and severity routing |
+| **Managed incidents** | OpsKnight: acknowledge, assign, snooze, escalate, resolve, with on-call schedules |
+| **Slack ChatOps** | Incident war room with one-click actions, posted by OpsKnight's own Slack app |
+| **HTTPS by default** | Nginx terminates TLS (Let's Encrypt) on your domain; the app only listens on loopback |
+| **Private by design** | Prometheus, Grafana, Loki and Alertmanager are bound to the private IP, never public |
+| **Infrastructure as code** | Docker Compose for the stack, Ansible for Alloy on monitored servers |
+
+> Incident handling was previously a custom Flask "Alert Action Service". It has been removed and replaced by [OpsKnight](https://github.com/opsknight-labs/OpsKnight) (Apache-2.0), which owns notifications, on-call, escalation and resolution tracking in its own PostgreSQL.
 
 ---
 
-## 📐 System Architecture
-
-```
-                         ┌─────────────────────────┐
-                         │   Proxmox Servers        │
-                         │                         │
-                         │ Metrics + Logs          │
-                         └────────────┬────────────┘
-                                      │
-                                      ▼
-                         ┌─────────────────────────┐
-                         │   Grafana Alloy         │
-                         │  (Collection Agent)     │
-                         └────────────┬────────────┘
-                                      │
-                        ┌─────────────┴─────────────┐
-                        ▼                           ▼
-           ┌──────────────────────┐    ┌──────────────────────┐
-           │    Prometheus        │    │       Loki           │
-           │    Metrics Store     │    │    Log Storage       │
-           │    Alert Evaluator   │    │                      │
-           └──────────┬───────────┘    └──────────┬───────────┘
-                      │                           │
-                      └────────────┬──────────────┘
-                                   ▼
-                        ┌──────────────────────┐
-                        │      Grafana         │
-                        │    Dashboards        │
-                        └──────────────────────┘
-
-              ALERT FLOW (Detection → Local Incident Mgmt)
-
-                      Prometheus
-                           │
-                           ▼
-                      Alertmanager
-                           │
-                           ▼
-        OpsKnight (local Docker container :3000 + Postgres)
-                  ┌────────┼────────┐
-                  ▼        ▼        ▼
-            Engineer   Escalation  Resolution
-        (push / SMS / email / Slack ChatOps)
-```
-
-### 🖼️ Visual System Diagram (Servers → Monitoring Stack → Local OpsKnight)
-
-```mermaid
-flowchart TB
-    subgraph SRVFARM["🖥️ Production Servers"]
-        direction LR
-        S1["Server 1<br/>Grafana Alloy Agent"]
-        S2["Server 2<br/>Grafana Alloy Agent"]
-        S3["Server 3<br/>Grafana Alloy Agent"]
-    end
-
-    subgraph MON["🖥️ Monitoring Server (single Docker host)"]
-        direction TB
-        PROM["⚙️ Prometheus<br/>Metrics Store + Alert Evaluator<br/>:9090"]
-        LOKI["📝 Loki<br/>Log Storage<br/>:3100"]
-        GRAF["📊 Grafana<br/>Dashboards<br/>(remap host port, see note)"]
-        AM["🚨 Alertmanager<br/>Routing & Grouping<br/>:9093"]
-
-        subgraph OPSK["🛡️ OpsKnight (self-hosted, local container)"]
-            direction TB
-            APP["OpsKnight App<br/>Next.js UI + API routes<br/>:3000"]
-            PG[("PostgreSQL<br/>Incidents / Schedules / Users")]
-            APP <--> PG
-        end
-    end
-
-    ENG(["🧑‍💻 On-Call Engineer"])
-    SLACK["💬 Slack<br/>(ChatOps war room, native OpsKnight app)"]
-
-    %% Metrics/logs flow
-    S1 -- "metrics (remote_write)" --> PROM
-    S2 -- "metrics (remote_write)" --> PROM
-    S3 -- "metrics (remote_write)" --> PROM
-    S1 -- "logs" --> LOKI
-    S2 -- "logs" --> LOKI
-    S3 -- "logs" --> LOKI
-
-    %% Grafana reads
-    PROM -- "query" --> GRAF
-    LOKI -- "query" --> GRAF
-    GRAF -- "dashboards / drill-down" --> ENG
-
-    %% Alert flow
-    PROM -- "evaluate rules<br/>fire alert (severity)" --> AM
-    AM -- "POST /api/integrations/prometheus<br/>?integrationId=..&integrationKey=..<br/>(http://opsknight:3000, same Docker network)" --> APP
-    APP -- "create/update incident" --> PG
-    APP -- "notify (push/SMS/email/Slack ChatOps)" --> SLACK
-    APP -- "notify" --> ENG
-    SLACK --> ENG
-    ENG -- "Ack / Assign / Note /<br/>Escalate / Resolve" --> APP
-
-    %% Resolution flow
-    PROM -- "condition clears<br/>send RESOLVED (send_resolved: true)" --> AM
-    AM -- "resolved webhook" --> APP
-    APP -- "auto-resolve incident" --> PG
-    APP -- "resolved notification" --> ENG
-
-    classDef srv fill:#FF9900,stroke:#232F3E,color:#232F3E
-    classDef mon fill:#1f77b4,stroke:#0d3a5c,color:#fff
-    classDef opsk fill:#0B5C3F,stroke:#083c29,color:#fff
-    classDef slack fill:#4A154B,stroke:#2c0e2d,color:#fff
-    class S1,S2,S3 srv
-    class PROM,LOKI,GRAF,AM mon
-    class APP,PG opsk
-    class SLACK slack
-```
-
-> ⚠️ **Port note:** Grafana's default port is also `3000`. Since OpsKnight also defaults to `3000`, when both run on the same Docker host you must remap one of them on the host side (e.g. expose OpsKnight as `3001:3000` or Grafana as `3030:3000`) — see [Configuration](#configuration).
-
-### Monitoring Flow Overview
-
-```
-Production Servers
-       ↓ (Metrics + Logs)
-Grafana Alloy
-       ├──→ Prometheus (Metrics)
-       └──→ Loki (Logs)
-           ↓
-       Grafana (UI)
-
-Alert Path:
-Prometheus → Alertmanager → OpsKnight (local container, :3000/:3001)
-           → Notification (Push/SMS/Email/Slack ChatOps) → Engineer Actions
-```
-
----
-
-## 🏗️ Components
-
-| Component | Purpose | Port | Runs On |
-|-----------|---------|------|---------|
-| **Grafana Alloy** | Collects metrics and logs from monitored servers | `12345` | Monitored servers |
-| **Prometheus** | Stores and evaluates metrics; fires alerts | `9090` | Monitoring server |
-| **Loki** | Centralizes and stores logs | `3100` | Monitoring server |
-| **Grafana** | Web dashboards and visualizations | `3000` (remap if OpsKnight also uses 3000) | Monitoring server |
-| **Alertmanager** | Groups, routes, fires, and resolves alerts | `9093` | Monitoring server |
-| **OpsKnight (app)** | Next.js app: incident creation, on-call scheduling, escalation, Slack ChatOps, status pages | `3000` (container) → map to a free host port | Monitoring server, **local Docker container** |
-| **OpsKnight (PostgreSQL)** | Stores incidents, schedules, users, integration credentials (encrypted) | `3001` (internal to Docker network) | Monitoring server, local Docker container |
-| **Slack** | Incident ChatOps war room + notifications, via OpsKnight's own Slack app | N/A | Cloud (only Slack itself, not incident data) |
-| **Ansible** | Installs and configures Alloy on servers | N/A | Admin machine |
-
-> The custom **Alert Action Service** (Flask webhook handler that previously ran on port `5000`) has been **removed**. Its job is now done entirely by the local OpsKnight container — no code to maintain, no local JSON state file.
-
----
-
-## 🔄 Complete Monitoring Workflow
-
-### **Step 1: Server Produces Telemetry**
-
-```
-CPU = 96%
-Memory = 82%  
-Disk = 91%
-Network Traffic = 850 Mbps
-```
-
-### **Step 2: Alloy Collects Data**
-
-```
-Linux Server
-     ├─→ CPU/Memory/Disk metrics → Alloy
-     ├─→ Docker container metrics → Alloy
-     ├─→ Application metrics → Alloy
-     └─→ System logs → Alloy
-```
-
-### **Step 3: Data Reaches Monitoring Server**
-
-```
-Alloy → Prometheus (metrics)
-Alloy → Loki (logs)
-```
-
-### **Step 4: Grafana Visualizes Data**
-
-```
-Prometheus ┐
-           ├─→ Grafana Dashboard
-Loki ──────┘
-```
-
-### **Step 5: Prometheus Evaluates Alert Rules**
-
-```yaml
-CPU > 90% for 5 minutes → FIRING
-Memory > 85% for 10 minutes → FIRING
-Disk > 90% for 15 minutes → FIRING
-```
-
-### **Step 6: Alertmanager Receives Alert**
-
-```
-Prometheus → Alertmanager
-             (severity: critical/warning)
-```
-
-### **Step 7: Alertmanager Routes Alert to OpsKnight**
-
-```
-if severity == "critical" → OpsKnight receiver
-if severity == "warning"  → OpsKnight receiver
-```
-
-### **Step 8: OpsKnight Receives the Webhook (locally, over the Docker network)**
-
-Because OpsKnight runs as a container on the same Docker host/network as Alertmanager, the webhook never leaves the machine:
-
-```
-Alertmanager → http://opsknight:3000/api/integrations/prometheus?integrationId=<ID>&integrationKey=<KEY>
-```
-
-(`opsknight` is the Docker Compose service name — Alertmanager reaches it over the internal Docker network, not the public internet.)
-
-### **Step 9: OpsKnight Creates an Incident**
-
-OpsKnight ingests the standard Alertmanager webhook payload and creates an incident using:
-
-- Incident title, taken in order from: `annotations.summary` → `annotations.description` → `labels.alertname` → fallback "Prometheus Alert"
-- Severity, mapped from the `severity` label (`critical`/`page` → critical, `error` → error, `warning` → warning, default → warning)
-- A deduplication key from Alertmanager's `fingerprint` field (or a SHA-256 hash of sorted labels if no fingerprint is present)
-- Affected instance/labels, start time, and a link back to Prometheus (`generatorURL`)
-
-### **Step 10: Engineer Handles Incident**
-
-```
-[Acknowledge]  [Snooze]  [Add Note]  [Assign]  [Escalate]  [Resolve]
-```
-
-Incident state, assignment history, and notes are stored in OpsKnight's own PostgreSQL database — no local JSON state file is needed.
-
-### **Step 11: Problem is Fixed**
-
-```
-CPU: 96% → 78% → 45%
-(no longer triggers alert condition)
-```
-
-### **Step 12: Alertmanager Sends Resolved Event**
-
-```
-Prometheus → Alertmanager: "Alert is now RESOLVED"
-```
-
-### **Step 13: OpsKnight Auto-Resolves the Incident**
-
-With `send_resolved: true` set on the Alertmanager receiver, OpsKnight matches the resolved payload to the original incident via the same deduplication key and closes it automatically, notifying whoever was assigned:
-
-```
-✅ RESOLVED: High CPU Usage
-   Server: prod-app-01
-   Duration: 8 minutes 32 seconds
-   Timestamp: 2024-01-15 14:23:15 UTC
-```
-
----
-
-## 📊 System Diagrams (DFD / ERD / Use Case)
-
-### 1️⃣ Data Flow Diagram (DFD)
-
-```mermaid
-flowchart TB
-    SRV([Production Servers])
-    ENG([Engineer])
-    ADM([Administrator])
-    SLK([Slack - ChatOps only])
-
-    P1(("1.0<br/>Collect Metrics & Logs<br/>Grafana Alloy"))
-    P2(("2.0<br/>Store & Evaluate Metrics<br/>Prometheus"))
-    P3(("2.1<br/>Store Logs<br/>Loki"))
-    P4(("3.0<br/>Visualize Data<br/>Grafana"))
-    P5(("4.0<br/>Route Alerts<br/>Alertmanager"))
-    P6(("5.0<br/>Create & Manage Incident<br/>OpsKnight (local container)"))
-    P8(("6.0<br/>Deploy & Configure<br/>Ansible"))
-
-    D1[(D1: Prometheus TSDB)]
-    D2[(D2: Loki Log Store)]
-    D3[(D3: OpsKnight PostgreSQL<br/>Incidents/Schedules/Users)]
-    D4[(D4: Alert Rules Config)]
-
-    SRV -- "CPU / Mem / Disk / Container / App metrics" --> P1
-    SRV -- "System & app logs" --> P1
-
-    P1 -- "remote_write metrics" --> P2
-    P1 -- "log streams" --> P3
-
-    P2 -- "write metrics" --> D1
-    P3 -- "write logs" --> D2
-
-    D1 -- "query metrics" --> P4
-    D2 -- "query logs" --> P4
-    P4 -- "dashboards" --> ENG
-
-    D4 -- "alert rules" --> P2
-    P2 -- "firing/resolved alerts" --> P5
-    P5 -- "webhook (local docker network)" --> P6
-
-    P6 -- "create/update incident" --> D3
-    P6 -- "notify via push/SMS/email" --> ENG
-    P6 -- "post ChatOps war room" --> SLK
-    SLK -- "interactive actions" --> ENG
-    ENG -- "Ack / Assign / Note / Escalate / Resolve" --> P6
-    P6 -- "update incident" --> D3
-    D3 -- "resolved notification" --> ENG
-
-    ADM -- "SSH / playbook run" --> P8
-    P8 -- "install & configure Alloy" --> SRV
-    ADM -- "define thresholds" --> D4
-    ADM -- "manage inventory" --> P8
-    ADM -- "configure OpsKnight integration, on-call schedules & escalation policies" --> P6
-```
-
-### 2️⃣ Entity Relationship Diagram (ERD)
-
-```mermaid
-erDiagram
-    SERVER ||--o{ METRIC : generates
-    SERVER ||--o{ LOG_ENTRY : generates
-    SERVER ||--o{ ALERT : triggers
-    SERVER {
-        string instance_id PK
-        string hostname
-        string ip_address
-        string environment
-        string role
-        boolean alloy_installed
-    }
-
-    METRIC {
-        string metric_id PK
-        string server_id FK
-        string metric_name
-        float value
-        datetime timestamp
-    }
-
-    LOG_ENTRY {
-        string log_id PK
-        string server_id FK
-        string source
-        string message
-        datetime timestamp
-    }
-
-    ALERT_RULE ||--o{ ALERT : defines
-    ALERT_RULE {
-        string rule_id PK
-        string alert_name
-        string expr
-        string severity
-        string for_duration
-        string summary_template
-    }
-
-    ALERT ||--|| OPSKNIGHT_INCIDENT : creates
-    ALERT {
-        string alert_id PK
-        string rule_id FK
-        string server_id FK
-        string status
-        float metric_value
-        string fingerprint
-        datetime started_at
-        datetime resolved_at
-    }
-
-    OPSKNIGHT_INCIDENT {
-        string incident_id PK, FK
-        string dedup_key
-        string status
-        string severity
-        string acknowledged_by FK
-        datetime acknowledged_at
-        string assigned_to FK
-        string notes
-        string escalation_policy_id
-    }
-
-    ENGINEER ||--o{ OPSKNIGHT_INCIDENT : acknowledges
-    ENGINEER ||--o{ OPSKNIGHT_INCIDENT : assigned_to
-    ENGINEER {
-        string engineer_id PK
-        string username
-        string opsknight_user_id
-        string team
-    }
-
-    ONCALL_SCHEDULE ||--o{ ENGINEER : includes
-    ONCALL_SCHEDULE {
-        string schedule_id PK
-        string team
-        string rotation_type
-        string timezone
-    }
-
-    DASHBOARD {
-        string dashboard_id PK
-        string name
-        string datasource
-    }
-
-    DASHBOARD ||--o{ SERVER : visualizes
-```
-
-### 3️⃣ Use Case Diagram
+## Architecture
 
 ```mermaid
 flowchart LR
-    Engineer(["🧑‍💻 Engineer"])
-    Admin(["🛠️ Administrator"])
-    Prometheus(["⚙️ Prometheus<br/>(system actor)"])
-    OpsKnight(["🛡️ OpsKnight<br/>(local system actor)"])
-
-    subgraph SYS["Proxmox Monitoring System"]
-        UC1(["View Dashboards"])
-        UC2(["Explore Logs"])
-        UC3(["Check Alert History"])
-        UC4(["Receive Incident Notification"])
-        UC5(["Acknowledge Incident"])
-        UC6(["Assign Incident"])
-        UC7(["Add Note to Incident"])
-        UC8(["Snooze Incident"])
-        UC9(["Escalate Incident"])
-        UC10(["Mark Incident Resolved"])
-        UC11(["Receive Resolved Notification"])
-        UC12(["Configure Alert Rules"])
-        UC13(["Configure Alertmanager Routing"])
-        UC14(["Deploy Grafana Alloy via Ansible"])
-        UC15(["Add Server to Inventory"])
-        UC16(["Configure OpsKnight Integration,<br/>On-Call Schedule & Escalation Policy"])
-        UC17(["Create Custom Dashboard"])
-        UC18(["Evaluate Alert Rule"])
-        UC19(["Fire / Resolve Alert"])
-        UC20(["Back Up OpsKnight Postgres Volume"])
+    subgraph SRV["Production servers"]
+        A["Grafana Alloy :12345"]
     end
 
-    Engineer --> UC1
-    Engineer --> UC2
-    Engineer --> UC3
-    Engineer --> UC4
-    Engineer --> UC5
-    Engineer --> UC6
-    Engineer --> UC7
-    Engineer --> UC8
-    Engineer --> UC9
-    Engineer --> UC10
-    Engineer --> UC11
-    Engineer --> UC17
+    subgraph HOST["Monitoring server 10.0.1.20"]
+        NGX["Nginx :80 / :443<br/>TLS, Let's Encrypt"]
+        subgraph DOCKER["Docker network proxmox-net"]
+            PROM["Prometheus :9090"]
+            LOKI["Loki :3100"]
+            GRAF["Grafana :3000"]
+            AM["Alertmanager :9093"]
+            APP["OpsKnight app<br/>127.0.0.1:3001"]
+            PG[("PostgreSQL<br/>127.0.0.1:5432")]
+        end
+    end
 
-    Admin --> UC12
-    Admin --> UC13
-    Admin --> UC14
-    Admin --> UC15
-    Admin --> UC16
-    Admin --> UC1
-    Admin --> UC17
-    Admin --> UC20
+    ENG(["On-call engineer"])
+    SLACK["Slack ChatOps"]
 
-    Prometheus --> UC18
-    Prometheus --> UC19
-
-    UC19 -.include.-> UC4
-    UC10 -.include.-> UC11
-    OpsKnight --> UC4
-    OpsKnight --> UC11
-    UC5 -.extend.-> UC7
-    UC6 -.extend.-> UC7
+    A -- "metrics (remote_write)" --> PROM
+    A -- logs --> LOKI
+    PROM -- query --> GRAF
+    LOKI -- query --> GRAF
+    PROM -- "fire / resolve" --> AM
+    AM -- "HTTPS webhook<br/>(extra_hosts: host-gateway)" --> NGX
+    NGX -- proxy_pass --> APP
+    APP --> PG
+    APP -- "push / SMS / email" --> ENG
+    APP -- ChatOps --> SLACK
+    ENG -- "https://opsknight.cherryberrycloud.com" --> NGX
+    SLACK -- "interactive actions" --> NGX
+    ENG -. "dashboards (LAN / VPN)" .-> GRAF
 ```
+
+More diagrams (data flow, ERD, use cases): [`docs/diagrams.md`](docs/diagrams.md).
+
+### Network exposure
+
+| Service | Bound to | Reachable from |
+|---|---|---|
+| Nginx | `0.0.0.0:80`, `0.0.0.0:443` | Internet (or your LAN). The only public entry point |
+| OpsKnight app | `127.0.0.1:3001` → container `3000` | The host only, via Nginx |
+| OpsKnight PostgreSQL | `127.0.0.1:5432` | The host only (and the `proxmox-net` network) |
+| Prometheus / Alertmanager / Loki / Grafana | `10.0.1.20:9090 / 9093 / 3100 / 3000` | Private LAN or VPN only |
+| Grafana Alloy | `:12345` on each monitored server | Local to the server |
+
+> Docker publishes ports through its own iptables rules and **bypasses `ufw`**. Binding each service to a specific IP in `docker-compose.yml` is what keeps it private, so keep those bindings.
 
 ---
 
-## 🚀 Deployment Guide
+## Components
 
-### **Prerequisites**
+| Component | Image / version | Purpose | Runs on |
+|---|---|---|---|
+| **Grafana Alloy** | installed by Ansible | Collects metrics and logs | Monitored servers |
+| **Prometheus** | `prom/prometheus:v3.13.2` | Stores metrics, evaluates alert rules, accepts remote_write | Monitoring server |
+| **Loki** | `grafana/loki:3.5.0` | Log storage | Monitoring server |
+| **Grafana** | `grafana/grafana:11.2.0` | Dashboards | Monitoring server |
+| **Alertmanager** | `prom/alertmanager:v0.28.1` | Groups, routes, resolves alerts | Monitoring server |
+| **OpsKnight app** | `ghcr.io/opsknight-labs/opsknight:2.0.0` | Incidents, on-call, escalation, Slack ChatOps | Monitoring server (container) |
+| **OpsKnight DB** | `postgres:15-alpine` | Incidents, schedules, users, encrypted credentials | Monitoring server (container) |
+| **Nginx** | system package | Reverse proxy, TLS termination, HTTP → HTTPS redirect | Monitoring server (host) |
+| **Certbot** | system package | Issues and renews the Let's Encrypt certificate | Monitoring server (host) |
+| **Slack** | SaaS | ChatOps messages and actions only, no incident data stored | Cloud |
+| **Ansible** | 2.9+ | Installs and configures Alloy | Admin machine |
 
-- Monitoring server: Ubuntu/Debian 20.04+, **6GB+ RAM recommended** (headroom for OpsKnight + its own Postgres, on top of the monitoring stack)
-- Monitored servers: Linux (Ubuntu/Debian/CentOS/RHEL)
-- Docker & Docker Compose installed
-- Ansible 2.9+
-- `openssl` (for generating OpsKnight's secrets — ships with most Linux distros)
-- No external accounts needed for incident management — OpsKnight is fully self-hosted
+---
 
-### **Deployment Order (From Zero)**
+## Workflow
 
-```
-1. Prepare monitoring server
-       ↓
-2. Install Docker
-       ↓
-3. Deploy Prometheus
-       ↓
-4. Deploy Grafana (remap port if it collides with OpsKnight's 3000)
-       ↓
-5. Deploy Loki
-       ↓
-6. Deploy Alertmanager
-       ↓
-7. Configure Prometheus alert rules
-       ↓
-8. Clone OpsKnight and start it as a local container (with its own Postgres)
-       ↓
-9. Create a Prometheus integration inside OpsKnight → copy Integration ID + Integration Key
-       ↓
-10. Configure Alertmanager route/webhook to point at the local OpsKnight container
-       ↓
-11. Configure OpsKnight on-call schedule, escalation policy, and notification channels (email/SMS/push/Slack)
-       ↓
-12. Configure Ansible
-       ↓
-13. Add monitored servers to inventory
-       ↓
-14. Install Grafana Alloy on servers
-       ↓
-15-21. Verify and test (including a real fire → ack → resolve cycle)
-```
+| # | Stage | What happens |
+|---|---|---|
+| 1 | **Collect** | Alloy on each server gathers CPU, memory, disk, container, application metrics and system logs |
+| 2 | **Store** | Metrics go to Prometheus (`remote_write`), logs to Loki, both on `10.0.1.20` |
+| 3 | **Visualize** | Grafana queries both for dashboards and drill-down |
+| 4 | **Detect** | Prometheus evaluates rules every 30s: `CPU > 90%` for 5m → **FIRING**, severity `critical` |
+| 5 | **Route** | Alertmanager groups by severity and POSTs the webhook to `https://opsknight.cherryberrycloud.com/api/integrations/prometheus` |
+| 6 | **Secure** | Nginx terminates TLS (Let's Encrypt) and proxies to `127.0.0.1:3001` |
+| 7 | **Incident** | OpsKnight de-duplicates (Alertmanager `fingerprint`), creates the incident, stores it in PostgreSQL |
+| 8 | **Respond** | On-call is notified by push, SMS, email and Slack, then acknowledges, assigns or escalates via the same HTTPS URL |
+| 9 | **Resolve** | Alert clears, Alertmanager sends `RESOLVED` (`send_resolved: true`), OpsKnight auto-closes the incident |
 
-### **Quick Start with Docker Compose**
+How OpsKnight builds the incident: the title comes from `annotations.summary` → `annotations.description` → `labels.alertname` → `"Prometheus Alert"`. The `severity` label maps `critical`/`page` → critical, `error` → error, `warning` → warning (default: warning). Use lowercase values.
 
-Run OpsKnight as its own Docker Compose stack (it ships one) on the same host, ideally on the same Docker network as Alertmanager, so they can talk to each other by service name.
+---
+
+## Deployment
+
+### Prerequisites
+
+- Monitoring server: Ubuntu/Debian 20.04+, **6 GB+ RAM**, 50 GB+ disk, a private IP (examples use `10.0.1.20`)
+- Monitored servers: Linux (Ubuntu / Debian / CentOS / RHEL)
+- Docker with the Compose plugin, Nginx, Certbot, `openssl`, Ansible 2.9+
+- **A domain name** (examples use `opsknight.cherryberrycloud.com`) and the ability to create a DNS record for it
+- Ports **80 and 443** reachable from the internet for the certificate challenge (or use DNS-01, see [TLS options](#tls-options))
+
+### Steps
 
 ```bash
-# ── 1. Monitoring stack ──────────────────────────────────────
-git clone https://github.com/proxmox-tech/monitoring.git
-cd monitoring
+# 1. Get the code
+sudo git clone https://github.com/Ahmadraza9091/proxmox-observability-stack.git /opt/proxmox-monitoring
+cd /opt/proxmox-monitoring
 
+# 2. Create .env (see "Environment variables")
 cp .env.example .env
-cp prometheus/prometheus.yml.example prometheus/prometheus.yml
-cp alertmanager/alertmanager.yml.example alertmanager/alertmanager.yml
-
-docker-compose up -d
-
-curl http://localhost:9090     # Prometheus
-curl http://localhost:9093     # Alertmanager
-# Grafana: see Configuration section for the port remap if needed
-
-# ── 2. OpsKnight (local, self-hosted) ────────────────────────
-cd ..
-git clone https://github.com/opsknight-labs/OpsKnight.git
-cd OpsKnight
-
-cp env.example .env
-
-# Generate the two secrets OpsKnight requires
 printf 'NEXTAUTH_SECRET=%s\n' "$(openssl rand -base64 32)" >> .env
 printf 'ENCRYPTION_KEY=%s\n'  "$(openssl rand -hex 32)"    >> .env
+printf 'API_KEY_SECRET=%s\n'  "$(openssl rand -hex 32)"    >> .env
+chmod 600 .env
+$EDITOR .env      # set passwords, POSTGRES_*, OPSKNIGHT_PUBLIC_URL=https://<your-domain>
 
-# Start OpsKnight + its bundled PostgreSQL
+# 3. DNS: create an A record  opsknight.cherryberrycloud.com -> <server public IP>
+
+# 4. Start the stack
 docker compose up -d
-
-curl http://localhost:3000     # OpsKnight (remap in docker-compose.yml if this clashes with Grafana)
+docker compose ps                      # all services should be Up / healthy
+curl -s http://127.0.0.1:3001/api/health?mode=readiness
 ```
 
-Open OpsKnight at **`http://MONITORING_SERVER_IP:3000`** (or your remapped port), create an admin account, and set up your first service. The database schema is created automatically on first boot — no separate migration step.
+5. **Set up Nginx and TLS**: follow [Reverse proxy, TLS & domain](#reverse-proxy-tls--domain).
+6. **First login**: open `https://opsknight.cherryberrycloud.com`, create the admin account, then **Service → Integrations → Add Integration → Prometheus** and copy the **Integration ID** and **Key**.
+7. **Alertmanager**: put the HTTPS webhook URL with that ID/key in `alertmanager/alertmanager.yml` ([example](#alertmanager-routing)), then `docker compose restart alertmanager`.
+8. **OpsKnight setup**: create the on-call schedule, escalation policy and notification channels (email / SMS / push / Slack) and attach them to the service.
+9. **Alloy on servers**: add hosts to the Ansible inventory and run the playbook ([Ansible](#ansible-alloy)).
+10. **Verify** with a [test alert](#send-a-test-alert) and a real fire → ack → resolve cycle (`stress-ng --cpu 0 --timeout 5m`).
 
-> `ENCRYPTION_KEY` encrypts integration credentials at rest inside OpsKnight's Postgres — **keep it safe and back it up**. Losing it means re-entering every integration secret.
->
-> **Before exposing OpsKnight to your network**, change the default PostgreSQL password in its `.env` and set `NEXTAUTH_URL` / `NEXT_PUBLIC_APP_URL` to the real hostname/IP engineers will use to reach it.
-
-### **Connecting the two stacks on one Docker network (recommended)**
-
-If you want Alertmanager to reach OpsKnight by service name (`http://opsknight:3000/...`) instead of a host IP, either:
-- run both `docker-compose.yml` files with the same external network (`docker network create proxmox-net`, then add `networks: [proxmox-net]` to both compose files), **or**
-- merge the OpsKnight service block into your monitoring stack's own `docker-compose.yml`.
-
-Either way, keep OpsKnight's Postgres container **internal only** (no host port published) — only the OpsKnight app itself needs a host-mapped port.
-
-### **Pinning a version (recommended for production)**
-
-```bash
-docker pull ghcr.io/opsknight-labs/opsknight:1.4.0
-```
-
-Avoid `latest` in production — it moves whenever a new release ships, so a container restart can silently change your OpsKnight version.
+> `docker compose` (v2) is used throughout. If you only have the old binary, replace it with `docker-compose`.
 
 ---
 
-## ⚙️ Configuration
+## Reverse proxy, TLS & domain
 
-### **Prometheus Alert Rules**
+OpsKnight's container is published on **loopback only** (`127.0.0.1:3001`) and `NEXTAUTH_URL` must be a public HTTPS URL, so a reverse proxy on the host is required. It terminates TLS, redirects HTTP → HTTPS and forwards to the container. Engineers, Slack and Alertmanager all use the same URL.
 
-File: `prometheus/rules/alerts.yml`
+### 1. DNS and firewall
+
+```bash
+# DNS: A record  opsknight.cherryberrycloud.com  ->  <server public IP>
+dig +short opsknight.cherryberrycloud.com
+
+sudo ufw allow 80,443/tcp        # only the proxy ports; 9090/9093/3100/3000 stay private
+```
+
+### 2. Install Nginx and Certbot, issue the certificate
+
+```bash
+sudo apt update && sudo apt install -y nginx certbot
+
+# Issue the certificate first (nginx must not be holding port 80 yet).
+# The hooks stop/start nginx around issuance and every renewal (a few seconds).
+sudo systemctl stop nginx
+sudo certbot certonly --standalone -d opsknight.cherryberrycloud.com \
+  --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx"
+```
+
+### 3. Enable the proxy
+
+```bash
+sudo cp nginx/opsknight.conf /etc/nginx/sites-available/opsknight.conf   # edit the domain if different
+sudo ln -s /etc/nginx/sites-available/opsknight.conf /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl enable --now nginx && sudo systemctl reload nginx
+```
+
+[`nginx/opsknight.conf`](nginx/opsknight.conf) in short:
+
+```nginx
+server { listen 80;  server_name opsknight.cherryberrycloud.com; return 301 https://$host$request_uri; }
+
+server {
+    listen 443 ssl;
+    server_name opsknight.cherryberrycloud.com;
+
+    ssl_certificate     /etc/letsencrypt/live/opsknight.cherryberrycloud.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/opsknight.cherryberrycloud.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    location / {
+        proxy_pass         http://127.0.0.1:3001;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+### 4. Match OpsKnight to the proxy (`.env`)
+
+```bash
+OPSKNIGHT_PUBLIC_URL=https://opsknight.cherryberrycloud.com   # used for NEXTAUTH_URL and NEXT_PUBLIC_APP_URL
+TRUST_PROXY_HEADERS=true      # default: trust X-Forwarded-* from the proxy
+TRUSTED_PROXY_HOPS=1          # Nginx = 1 hop. Use 2 if something else (e.g. Cloudflare) sits in front
+```
+
+```bash
+docker compose up -d opsknight-app      # apply .env changes
+```
+
+### 5. How Alertmanager reaches the proxy
+
+`docker-compose.yml` gives the Alertmanager container two things:
+
+```yaml
+extra_hosts:
+  - "opsknight.cherryberrycloud.com:host-gateway"          # the domain resolves to the Docker host
+volumes:
+  - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro   # trusts the certificate's CA
+```
+
+The webhook therefore goes **Alertmanager → Docker host :443 → Nginx → `127.0.0.1:3001`**. It never leaves the machine, the certificate still matches the hostname, and certificate validation stays on.
+
+### 6. Verify
+
+```bash
+# Certificate and redirect
+curl -sI http://opsknight.cherryberrycloud.com  | head -n1           # 301
+curl -sI https://opsknight.cherryberrycloud.com | head -n1           # 200 / 307
+echo | openssl s_client -connect opsknight.cherryberrycloud.com:443 \
+  -servername opsknight.cherryberrycloud.com 2>/dev/null | openssl x509 -noout -issuer -dates
+
+# Same path Alertmanager uses (inside its container)
+docker exec alertmanager wget -qO- "https://opsknight.cherryberrycloud.com/api/health?mode=readiness"
+
+# Renewal
+sudo certbot renew --dry-run
+systemctl list-timers | grep certbot
+```
+
+### TLS options
+
+| Situation | Use |
+|---|---|
+| Server reachable on 80/443 from the internet | HTTP-01 as above (`--standalone`, or `--webroot` to avoid the brief nginx stop) |
+| Server only on a private network, internal DNS | DNS-01 with a Certbot DNS plugin (no inbound port 80 needed) or your internal CA. Mount that CA into Alertmanager |
+| Another proxy (Caddy, Traefik, cloud load balancer) | Keep the same contract: HTTPS on your domain → `127.0.0.1:3001`, set `TRUSTED_PROXY_HOPS` to the real hop count |
+
+---
+
+## Configuration
+
+### Environment variables (`.env`)
+
+| Variable | Required | Notes |
+|---|---|---|
+| `GF_SECURITY_ADMIN_USER`, `GF_SECURITY_ADMIN_PASSWORD` | yes | Grafana admin. `GF_USERS_ALLOW_SIGN_UP` defaults to `false` |
+| `PROMETHEUS_RETENTION` | no | Default `30d` |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | yes | OpsKnight database. Use a strong password |
+| `OPSKNIGHT_PUBLIC_URL` | yes | Public **HTTPS** URL, e.g. `https://opsknight.cherryberrycloud.com` |
+| `NEXTAUTH_SECRET` | yes | `openssl rand -base64 32` |
+| `ENCRYPTION_KEY` | yes | `openssl rand -hex 32`. Encrypts integration credentials at rest. **Back it up**: losing it means re-entering every integration |
+| `API_KEY_SECRET` | yes | Random secret, e.g. `openssl rand -hex 32` |
+| `OPSKNIGHT_IMAGE` | no | Defaults to `ghcr.io/opsknight-labs/opsknight:2.0.0`. Keep it pinned; never `latest` |
+| `APP_PORT` | no | Host loopback port for the app, default `3001` |
+| `TRUST_PROXY_HEADERS`, `TRUSTED_PROXY_HOPS` | no | Defaults `true` and `1`, see [step 4](#4-match-opsknight-to-the-proxy-env) |
+| `POSTGRES_PORT` | no | Loopback port for the DB, default `5432` |
+| `PROMETHEUS_SCRAPE_TOKEN`, `NOTIFICATION_CONTROL_PLANE_PERSONAL`, `NODE_OPTIONS` | no | Optional OpsKnight settings, see the OpsKnight docs |
+
+### Prometheus alert rules
+
+`prometheus/rules/alerts.yml`
 
 ```yaml
 groups:
@@ -658,119 +324,67 @@ groups:
       - alert: HighCPUUsage
         expr: node_cpu_usage > 90
         for: 5m
-        labels:
-          severity: critical
+        labels: { severity: critical }
         annotations:
           summary: "High CPU usage on {{ $labels.instance }}"
           description: "CPU is {{ $value }}% for more than 5 minutes"
-          
+
       - alert: HighMemoryUsage
         expr: node_memory_usage > 85
         for: 10m
-        labels:
-          severity: warning
+        labels: { severity: warning }
         annotations:
           summary: "High memory usage on {{ $labels.instance }}"
           description: "Memory is {{ $value }}% for more than 10 minutes"
-          
+
       - alert: DiskSpaceRunningOut
         expr: node_disk_usage > 90
         for: 15m
-        labels:
-          severity: critical
+        labels: { severity: critical }
         annotations:
           summary: "Disk space critical on {{ $labels.instance }}"
           description: "Disk usage is {{ $value }}%"
 ```
 
-> OpsKnight maps the `severity` label to its own severity levels: `critical`/`page` → critical, `error` → error, `warning` → warning, anything else defaults to warning. Use lowercase values.
-
-**Prometheus Alerts UI** — rule groups (`docker-alerts`, `monitoring-stack`, `mysql-alerts`, `python-alerts`, `server-alerts`) showing INACTIVE / PENDING states before they fire:
+Rule groups in use: `docker-alerts`, `monitoring-stack`, `mysql-alerts`, `python-alerts`, `server-alerts`.
 
 ![Prometheus Alerts page](screenshots/prometheus-alerts.png)
 
-### **Create the OpsKnight Integration (one-time, in the UI)**
+### Alertmanager routing
 
-1. In OpsKnight, open your **Service → Integrations** tab
-2. Click **Add Integration** → select **Prometheus**
-3. Copy the generated **Integration ID** and **Integration Key**
-
-### **Alertmanager Routing → local OpsKnight container**
-
-File: `alertmanager/alertmanager.yml`
+`alertmanager/alertmanager.yml`
 
 ```yaml
 global:
   resolve_timeout: 5m
 
 route:
-  receiver: 'opsknight'
+  receiver: opsknight
   group_by: ['alertname', 'cluster', 'service']
   group_wait: 10s
   group_interval: 10s
   repeat_interval: 12h
-
   routes:
-    - match:
-        severity: critical
+    - match: { severity: critical }
       receiver: opsknight
       repeat_interval: 5m
-
-    - match:
-        severity: warning
+    - match: { severity: warning }
       receiver: opsknight
       repeat_interval: 1h
 
 receivers:
   - name: opsknight
     webhook_configs:
-      # If both compose stacks share a Docker network, use the service name:
-      - url: 'http://opsknight:3000/api/integrations/prometheus?integrationId=YOUR_INTEGRATION_ID&integrationKey=YOUR_INTEGRATION_KEY'
+      # HTTPS on your domain. The container resolves it to the host via extra_hosts.
+      - url: 'https://opsknight.cherryberrycloud.com/api/integrations/prometheus?integrationId=YOUR_INTEGRATION_ID&integrationKey=YOUR_INTEGRATION_KEY'
         send_resolved: true
-      # Otherwise, use the monitoring server's own IP/hostname and mapped port:
-      # - url: 'http://MONITORING_SERVER_IP:3000/api/integrations/prometheus?integrationId=YOUR_INTEGRATION_ID&integrationKey=YOUR_INTEGRATION_KEY'
-      #   send_resolved: true
 ```
 
-Keep `send_resolved: true` — without it, OpsKnight never learns an alert cleared and the incident stays open until someone resolves it manually.
+Keep `send_resolved: true`. Without it OpsKnight never learns an alert cleared and the incident stays open until someone resolves it by hand. The integration ID/key is a secret: do not commit it.
 
-> **Security note:** as of OpsKnight v1.4, this route authenticates purely via the `integrationId`/`integrationKey` query string — it does not verify a request signature. Treat that URL (with its key) as a secret: don't commit it, and if you need an extra layer of sender verification, put a trusted signing/auth gateway in front of it.
+### Ansible (Alloy)
 
-### **Environment Variables — OpsKnight**
-
-File: `OpsKnight/.env` (copied from `env.example`)
-
-```bash
-# Generated once, kept secret, backed up
-NEXTAUTH_SECRET=<generated via: openssl rand -base64 32>
-ENCRYPTION_KEY=<generated via: openssl rand -hex 32>
-
-# Set to how engineers will actually reach OpsKnight
-NEXTAUTH_URL=http://MONITORING_SERVER_IP:3000
-NEXT_PUBLIC_APP_URL=http://MONITORING_SERVER_IP:3000
-
-# Bundled Postgres credentials (change the default password before exposing this to the network)
-POSTGRES_PASSWORD=change-me
-```
-
-To point OpsKnight at an existing/external PostgreSQL instance instead of the bundled one, use `docker-compose.external-db.yml` from the OpsKnight repo and set `DATABASE_URL` directly (Postgres 14+ required).
-
-### **Port Remap Example (Grafana vs. OpsKnight both default to 3000)**
-
-```yaml
-# In OpsKnight's docker-compose.yml (or your merged compose file)
-services:
-  opsknight:
-    image: ghcr.io/opsknight-labs/opsknight:1.4.0   # pin an exact version in production
-    ports:
-      - "3001:3000"     # host:container — pick any free host port
-```
-
-Then set `NEXTAUTH_URL=http://MONITORING_SERVER_IP:3001` accordingly.
-
-### **Ansible Playbook for Alloy Installation**
-
-File: `ansible/playbooks/install-alloy.yml`
+`ansible/playbooks/install-alloy.yml`
 
 ```yaml
 ---
@@ -779,46 +393,35 @@ File: `ansible/playbooks/install-alloy.yml`
   roles:
     - alloy
   vars:
-    prometheus_server: "monitoring.internal:9090"
-    loki_server: "monitoring.internal:3100"
+    prometheus_server: "10.0.1.20:9090"     # remote_write target (private IP)
+    loki_server: "10.0.1.20:3100"
     alloy_config: "/etc/alloy/config.alloy"
 ```
 
+```bash
+ansible all -i inventory/production.ini -m ping
+ansible-playbook -i inventory/production.ini playbooks/install-alloy.yml --syntax-check
+ansible-playbook -i inventory/production.ini playbooks/install-alloy.yml
+```
+
+### Pinning versions
+
+All images in `docker-compose.yml` are pinned. Update the tag deliberately, test, then `docker compose pull && docker compose up -d`. The OpsKnight service uses `pull_policy: always`, so a pinned tag is essential: `latest` would change on any restart.
+
 ---
 
-## 📊 Monitoring & Dashboards
+## Dashboards & queries
 
-### **Pre-built Dashboards**
-
-Grafana includes dashboards for:
-
-- 📈 Server Overview (CPU, memory, disk, network)
-- 🐳 Docker Containers
-- 🗄️ MySQL/Database metrics
-- 🔗 Application metrics
-- 📝 Logs exploration
-- 🚨 Alert history
-- 🔄 System uptime
-
-### **Creating Custom Dashboards**
-
-1. Open Grafana: `http://monitoring-server:PORT` (see port remap note above)
-2. Login with admin credentials
-3. Click "+" → "Dashboard" → "Add Panel"
-4. Select datasource (Prometheus or Loki)
-5. Write query: `up{job="node-exporter"}`
-6. Visualize and save
-
-### **Example Queries**
+Grafana (`http://10.0.1.20:3000`, LAN/VPN) provides: Server Overview (CPU, memory, disk, network), Docker Containers, MySQL, Application metrics, Logs exploration, Alert history and System uptime. Create more via **+ → Dashboard → Add panel**, datasource Prometheus or Loki.
 
 ```promql
 # CPU usage per server
 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
 
-# Memory available percentage
+# Memory available %
 (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100
 
-# Disk usage percentage
+# Disk usage %
 (node_filesystem_size_bytes - node_filesystem_avail_bytes) / node_filesystem_size_bytes * 100
 
 # Network throughput
@@ -827,123 +430,55 @@ rate(node_network_transmit_bytes_total[5m])
 
 ---
 
-## 🚨 Alert / Incident Management (OpsKnight)
+## Incident management (OpsKnight)
 
-### **Incident Lifecycle**
-
-```
-PENDING → FIRING → (OpsKnight creates incident, local container) → ACKNOWLEDGED → RESOLVED
-```
-
-### **Incident Actions (OpsKnight)**
+Lifecycle: `PENDING → FIRING → incident created → ACKNOWLEDGED → RESOLVED`.
 
 | Action | Effect |
-|--------|--------|
-| **Acknowledge** | Marks incident as acknowledged, stops further escalation |
-| **Snooze** | Mutes the incident for a set period |
-| **Add Note** | Adds context/notes to the incident timeline |
-| **Assign** | Assigns to a team member, notifies them |
+|---|---|
+| **Acknowledge** | Marks the incident acknowledged and stops further escalation |
+| **Snooze** | Mutes it for a set period |
+| **Add note** | Adds context to the timeline |
+| **Assign** | Assigns to a teammate and notifies them |
 | **Escalate** | Moves to the next step of the escalation policy |
-| **Resolve** | Manually closes the incident |
+| **Resolve** | Closes it manually (alerts that clear close it automatically) |
 
-**OpsKnight Incidents Dashboard** — every `alertmanager`-sourced incident, with status, urgency, and assignee:
+![OpsKnight incidents dashboard](screenshots/opsknight-incidents-dashboard.png)
 
-![OpsKnight Incidents dashboard](screenshots/opsknight-incidents-dashboard.png)
+- **State** (acks, assignments, notes, escalations) lives in OpsKnight's PostgreSQL volume `opsknight_postgres_data`. Back that volume up.
+- **On-call**: schedules per team (`ops-team`, `db-oncall`), escalation steps (e.g. primary → wait 5m → secondary → wait 10m → manager), channels per user: email, SMS, push (OpsKnight PWA) and Slack.
+- **Deduplication**: OpsKnight matches firing and resolved alerts by Alertmanager's `fingerprint` (fallback: SHA-256 of the sorted labels). A mismatch is the most common cause of duplicate or "stuck open" incidents, so verify with a real fire → resolve cycle.
 
-### **Where State Lives Now**
-
-All incident state — acknowledgement, assignment, notes, escalation history, resolution — lives in **OpsKnight's own PostgreSQL container**, running locally alongside the rest of the stack. There is no JSON state file on disk to reason about or back up separately; back up the Postgres volume instead (see Quick Reference).
-
-### **On-Call & Escalation Policies**
-
-Configure inside the OpsKnight web UI:
-
-- On-call schedules per team (e.g. `ops-team`, `db-oncall`) with rotations and time zones
-- Escalation steps (e.g. notify primary → wait 5m → notify secondary → wait 10m → notify manager)
-- Notification channels per user: email, SMS, push (via the OpsKnight mobile PWA), and Slack ChatOps if the Slack app is connected
-
-**Slack Notification (example)** — OpsKnight posts the incident straight into Slack with one-click actions (Acknowledge / Assign to Me / Resolve / View Details):
-
-![OpsKnight Slack incident notification](screenshots/opsknight-slack-notification.png)
-
-### **Deduplication**
-
-OpsKnight prefers Alertmanager's `fingerprint` field to match firing/resolved pairs to the same incident; if no fingerprint is sent, it falls back to a SHA-256 hash of the sorted alert labels. Verify this with a real fire → resolve cycle during testing — a mismatch here is the most common cause of duplicate or "stuck open" incidents.
+![OpsKnight Slack notification](screenshots/opsknight-slack-notification.png)
 
 ---
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
-### **Grafana Alloy is not running**
+| Symptom | Check |
+|---|---|
+| Alloy not running | `sudo systemctl status alloy --no-pager` · `sudo journalctl -u alloy -f` · `sudo systemctl restart alloy` |
+| Prometheus gets no metrics | `http://10.0.1.20:9090/targets` · `sudo cat /etc/alloy/config.alloy` · `telnet 10.0.1.20 9090` from the server |
+| Grafana shows no data | Prometheus up (`curl http://10.0.1.20:9090`) · datasource URL correct · time range not in the future |
+| Alertmanager not receiving alerts | `http://10.0.1.20:9093` · `curl http://10.0.1.20:9090/api/v1/rules` |
+| **Browser: certificate warning / expired** | `sudo certbot certificates` · `sudo certbot renew --dry-run` · `systemctl status certbot.timer` · `sudo nginx -t` |
+| **502 Bad Gateway** | App down or unhealthy: `docker compose ps` · `curl -s http://127.0.0.1:3001/api/health?mode=readiness` · `docker logs opsknight-app --tail 100` |
+| **Login loops / wrong redirects** | `OPSKNIGHT_PUBLIC_URL` must be the exact HTTPS URL · proxy sends `Host` and `X-Forwarded-Proto` · `TRUSTED_PROXY_HOPS` matches your proxy chain |
+| **Alertmanager webhook fails (TLS / x509 / no such host)** | `docker logs alertmanager --tail 100` · `docker exec alertmanager wget -qO- "https://opsknight.cherryberrycloud.com/api/health?mode=readiness"` · `extra_hosts` entry present · CA bundle mounted · certificate not expired |
+| **Port 80/443 already in use** | `sudo ss -ltnp \| grep -E ':80\|:443'` (another web server, or Docker publishing those ports) |
+| Incident not created | Webhook URL, ID and key match exactly · integration enabled under **Service → Integrations** · `send_resolved: true` · a schedule/escalation policy is attached to the service |
+| No notification to engineer | Valid email/phone/push/Slack on the profile · someone is on-call now · Slack app still authorized (**Settings → Slack OAuth**) · provider tested under **Administration → Notifications** |
+| OpsKnight won't start | `docker compose logs opsknight-app --tail 200` · `NEXTAUTH_SECRET`, `ENCRYPTION_KEY`, `API_KEY_SECRET` set · DB healthy |
 
-```bash
-sudo systemctl status alloy --no-pager
-sudo journalctl -u alloy -f
-sudo systemctl restart alloy
-```
+### Send a test alert
 
-### **Prometheus is not receiving metrics**
-
-```bash
-# Visit:
-http://MONITORING_SERVER_IP:9090/targets
-
-# Verify Alloy configuration:
-sudo systemctl status alloy
-sudo cat /etc/alloy/config.alloy
-
-# Check network connectivity:
-telnet MONITORING_SERVER_IP 9090
-```
-
-### **Grafana has no data**
-
-1. ✅ Prometheus is running: `curl http://localhost:9090`
-2. ✅ Prometheus has data: `http://localhost:9090/graph`
-3. ✅ Grafana datasource URL is correct
-4. ✅ Time range in Grafana is not in the future
-
-### **Alertmanager is not receiving alerts**
+Goes through the real TLS path. If this creates an incident but real alerts do not, the problem is between Alertmanager and the proxy (URL, key, hosts entry, CA), not in OpsKnight.
 
 ```bash
-http://MONITORING_SERVER_IP:9093
-curl http://localhost:9090/api/v1/rules
-```
-
-### **Incident is not appearing in OpsKnight**
-
-```bash
-# 1. Confirm Alertmanager actually tried to deliver the webhook
-curl http://MONITORING_SERVER_IP:9093/api/v1/status
-
-# 2. Check Alertmanager logs for delivery errors
-sudo docker logs alertmanager --tail 100
-
-# 3. Check whether OpsKnight itself is reachable and healthy
-curl http://MONITORING_SERVER_IP:3000     # or your remapped port
-sudo docker logs opsknight --tail 100
-sudo docker logs opsknight-postgres --tail 100   # container name may differ — check `docker ps`
-```
-
-Also verify:
-
-- ✅ The webhook URL in `alertmanager.yml` matches exactly, including `integrationId` and `integrationKey`
-- ✅ If using the Docker-network service name (`http://opsknight:3000/...`), confirm both compose stacks are actually on the same network (`docker network inspect proxmox-net`)
-- ✅ The integration is enabled in **Service → Integrations** inside OpsKnight
-- ✅ `send_resolved: true` is set — otherwise resolved alerts never reach OpsKnight
-- ✅ An on-call schedule/escalation policy is actually attached to the service — an incident can be created with nowhere to route it
-- ✅ OpsKnight's own container has restarted cleanly after any host reboot (`docker compose ps` in the OpsKnight directory)
-
-### **Send a manual test alert**
-
-```bash
-curl -X POST "http://MONITORING_SERVER_IP:3000/api/integrations/prometheus?integrationId=YOUR_ID&integrationKey=YOUR_KEY" \
+curl -X POST "https://opsknight.cherryberrycloud.com/api/integrations/prometheus?integrationId=YOUR_ID&integrationKey=YOUR_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "version": "4",
-    "groupKey": "test",
-    "status": "firing",
-    "receiver": "test",
+    "version": "4", "groupKey": "test", "status": "firing", "receiver": "test",
     "groupLabels": {},
     "commonLabels": {"alertname": "TestAlert", "severity": "warning"},
     "commonAnnotations": {"summary": "Test alert"},
@@ -952,233 +487,135 @@ curl -X POST "http://MONITORING_SERVER_IP:3000/api/integrations/prometheus?integ
       "status": "firing",
       "labels": {"alertname": "TestAlert", "severity": "warning"},
       "annotations": {"summary": "Test alert"},
-      "startsAt": "2024-01-15T10:00:00Z",
+      "startsAt": "2026-01-15T10:00:00Z",
       "generatorURL": "http://test",
       "fingerprint": "test123"
     }]
   }'
 ```
 
-If this creates an incident but real Alertmanager alerts don't, the problem is between Alertmanager and OpsKnight (network/URL/key), not inside OpsKnight itself.
-
-### **Notifications from OpsKnight aren't reaching the engineer**
-
-- ✅ The engineer's OpsKnight profile has a valid email/phone/push device or Slack account for the channels used
-- ✅ Someone is actually on-call for the current time window in the schedule
-- ✅ If using Slack ChatOps, confirm the Slack app is still connected/authorized (**Settings → Slack OAuth**) — token expiry or workspace changes will silently break this
-- ✅ Notification provider (SMS/email) is configured and tested under **Administration → Notifications**
-
-### **OpsKnight container won't start / migrations look wrong**
-
-```bash
-cd OpsKnight
-docker compose logs opsknight --tail 200
-docker compose ps
-```
-
-- The database schema is created automatically on first boot — there's no manual migration step
-- If you changed `DATABASE_URL` after the first boot, make sure the target Postgres is reachable and on Postgres 14+
-- Check that `NEXTAUTH_SECRET` and `ENCRYPTION_KEY` are actually set in `.env` — OpsKnight requires both to start
-
 ---
 
-## 🔒 Security
+## Security
 
-- OpsKnight encrypts integration credentials (like the Prometheus integration key) **at rest**, keyed by `ENCRYPTION_KEY` — losing that key means re-entering every integration
-- The Prometheus/Alertmanager route in OpsKnight v1.4 authenticates via the `integrationId`/`integrationKey` query string only; it does **not** verify a signature header on that route. Keep the webhook URL secret, and add a trusted gateway in front if you need stronger sender verification
-- RBAC inside OpsKnight governs who can view/edit incidents, services, and schedules
-- Do **not** expose Prometheus, Alertmanager, or OpsKnight's admin UI directly to the public internet — put them behind your VPN/firewall or a reverse proxy with auth
-- Before going to production, change OpsKnight's default PostgreSQL password and set `NEXTAUTH_URL`/`NEXT_PUBLIC_APP_URL` to the real hostname engineers will use
-- Found a security issue in OpsKnight itself? Don't file a public GitHub issue — see [OpsKnight's SECURITY.md](https://github.com/opsknight-labs/OpsKnight/blob/main/SECURITY.md) for private disclosure
+- **Exposure**: only Nginx (80/443) is public. Everything else is bound to `10.0.1.20` or `127.0.0.1` in `docker-compose.yml`. Do not change those bindings to `0.0.0.0`; Docker ignores `ufw`.
+- **TLS**: TLS 1.2+, HTTP redirects to HTTPS, certificates auto-renew through Certbot. Enable HSTS once HTTPS is confirmed.
+- **Webhook authentication**: the Prometheus integration authenticates by the `integrationId` / `integrationKey` query string (confirmed for OpsKnight v1.4, **re-check the docs for 2.0.0**). HTTPS protects it in transit, but the key also appears in the **Nginx access log**: restrict log access or log `$uri` instead of `$request`. If you need sender verification, add a signing/auth gateway in front.
+- **Database**: PostgreSQL is published on loopback only. If you do not need host access (for `pg_dump`), remove its `ports:` entry so it is reachable only inside `proxmox-net`.
+- **Secrets**: `NEXTAUTH_SECRET`, `ENCRYPTION_KEY`, `API_KEY_SECRET`, `POSTGRES_PASSWORD`, the integration ID/key, SSH keys and API keys never go in Git. Keep `.env` at `chmod 600`, back up `ENCRYPTION_KEY` separately.
+- **Access**: OpsKnight RBAC governs incidents, services and schedules. Grafana sign-up is disabled by default; use strong admin passwords (LDAP/OAuth if available).
+- **Vulnerabilities in OpsKnight itself**: report privately, see [SECURITY.md](https://github.com/opsknight-labs/OpsKnight/blob/main/SECURITY.md).
 
-### **`.gitignore` Template**
+`.gitignore` essentials:
 
 ```gitignore
-# Environment
 .env
 .env.local
-
-# SSH/Keys
 *.pem
 *.key
 *.pub
-
-# Python
-venv/
-__pycache__/
-*.pyc
-*.egg-info/
-
-# Logs
-*.log
-logs/
-
-# Sensitive data
-passwords.txt
 secrets/
-```
-
-### **Do Not Commit**
-
-```
-NEXTAUTH_SECRET
-ENCRYPTION_KEY
-OpsKnight integrationId / integrationKey (query string)
-POSTGRES_PASSWORD
-SSH private keys
-Database passwords
-API keys
+passwords.txt
+*.log
 ```
 
 ---
 
-## 📁 Repository Structure
+## Repository structure
 
 ```
-proxmox-monitoring/
-│
+proxmox-observability-stack/
 ├── README.md
-├── docker-compose.yml
+├── docker-compose.yml          # Prometheus, Grafana, Alertmanager, Loki, OpsKnight app + DB
 ├── .env.example
-│
+├── alertmanager/
+│   ├── alertmanager.yml
+│   └── templates/
+├── alloy/                      # Grafana Alloy configuration
+├── ansible/
+│   ├── inventory/              # production.ini.example, test.ini.example
+│   ├── playbooks/install-alloy.yml
+│   └── roles/alloy/
+├── docs/
+│   └── diagrams.md             # DFD, ERD, use cases
+├── loki/loki-config.yml
+├── nginx/
+│   └── opsknight.conf          # reverse proxy + TLS (copy to /etc/nginx/sites-available/)
 ├── prometheus/
 │   ├── prometheus.yml
-│   └── rules/
-│       └── alerts.yml
-│
-├── alertmanager/
-│   └── alertmanager.yml
-│
-├── loki/
-│   └── loki-config.yml
-│
-├── grafana/
-│   └── provisioning/
-│       ├── datasources/
-│       └── dashboards/
-│
-└── ansible/
-    ├── inventory/
-    │   ├── production.ini.example
-    │   └── test.ini.example
-    ├── playbooks/
-    │   └── install-alloy.yml
-    └── roles/
-        └── alloy/
-            ├── defaults/
-            ├── handlers/
-            ├── tasks/
-            └── templates/
-
-OpsKnight/                          # separate clone: github.com/opsknight-labs/OpsKnight
-├── docker-compose.yml              # OpsKnight app + bundled Postgres
-├── docker-compose.external-db.yml  # variant for an external Postgres
-├── .env                            # NEXTAUTH_SECRET, ENCRYPTION_KEY, etc. (not committed)
-└── docs/v1.4/                      # full OpsKnight documentation, incl. integrations/metrics-alerting/prometheus.md
+│   └── rules/alerts.yml
+└── screenshots/                # workflow.gif and UI screenshots
 ```
 
-> The `alert-action/` directory (old Flask app, `requirements.txt`, systemd unit) has been **removed** — that functionality now lives entirely in the local OpsKnight container.
-
 ---
 
-## ⚡ Quick Reference
+## Quick reference
 
 | Task | Command |
-|------|---------|
-| **Check Alloy** | `sudo systemctl status alloy --no-pager` |
-| **Alloy logs** | `sudo journalctl -u alloy -f` |
-| **Restart Alloy** | `sudo systemctl restart alloy` |
-| **Prometheus UI** | `http://MONITORING_SERVER_IP:9090` |
-| **Prometheus targets** | `http://MONITORING_SERVER_IP:9090/targets` |
-| **Alertmanager UI** | `http://MONITORING_SERVER_IP:9093` |
-| **Grafana UI** | `http://MONITORING_SERVER_IP:<remapped port>` |
-| **OpsKnight UI** | `http://MONITORING_SERVER_IP:3000` (or remapped port) |
-| **OpsKnight logs** | `cd OpsKnight && docker compose logs -f opsknight` |
-| **Restart OpsKnight** | `cd OpsKnight && docker compose restart opsknight` |
-| **Back up OpsKnight DB** | `docker exec <postgres-container> pg_dump -U <user> opsknight > opsknight-backup.sql` |
-| **CPU stress test** | `stress-ng --cpu 0 --timeout 5m --metrics-brief` |
-| **Stop stress test** | `pkill stress-ng` |
-| **Ansible ping** | `ansible all -i inventory/production.ini -m ping` |
-| **Ansible syntax check** | `ansible-playbook playbooks/install-alloy.yml --syntax-check` |
+|---|---|
+| Stack status | `cd /opt/proxmox-monitoring && docker compose ps` |
+| Apply changes | `docker compose up -d` |
+| OpsKnight logs | `docker compose logs -f opsknight-app` |
+| Restart OpsKnight / Alertmanager | `docker compose restart opsknight-app` · `docker compose restart alertmanager` |
+| Nginx test / reload | `sudo nginx -t && sudo systemctl reload nginx` |
+| Certificate status / renew test | `sudo certbot certificates` · `sudo certbot renew --dry-run` |
+| Prometheus targets | `http://10.0.1.20:9090/targets` |
+| OpsKnight UI | `https://opsknight.cherryberrycloud.com` |
+| Back up OpsKnight DB | `docker exec opsknight-db sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > opsknight-backup.sql` |
+| Alloy status / logs / restart | `sudo systemctl status alloy --no-pager` · `sudo journalctl -u alloy -f` · `sudo systemctl restart alloy` |
+| CPU stress test / stop | `stress-ng --cpu 0 --timeout 5m --metrics-brief` · `pkill stress-ng` |
 
 ---
 
-## ✅ Production Readiness Checklist
+## Production checklist
 
-- [ ] Monitoring server has sufficient CPU/RAM/storage (6GB+ RAM, 50GB+ disk — OpsKnight's Postgres adds to this)
-- [ ] Docker containers use pinned versions (not `latest`) — including `ghcr.io/opsknight-labs/opsknight:<version>`
-- [ ] Prometheus retention is configured (30+ days recommended)
-- [ ] Loki retention/storage is configured
-- [ ] Grafana authentication is secured (strong password, LDAP/OAuth if available)
-- [ ] Prometheus/Alertmanager/OpsKnight admin UI are **not** publicly exposed
-- [ ] Grafana and OpsKnight port collision (both default `3000`) is resolved
-- [ ] Alloy is managed by systemd on all monitored servers
-- [ ] Alloy configuration is managed by Ansible (Infrastructure as Code)
-- [ ] Production inventory is separated from test inventory
-- [ ] Alert rules are documented and reviewed
-- [ ] OpsKnight's `NEXTAUTH_SECRET` and `ENCRYPTION_KEY` are generated, stored securely, and backed up
-- [ ] OpsKnight's default PostgreSQL password has been changed
-- [ ] OpsKnight Prometheus integration ID/key is configured and not committed to Git
-- [ ] Critical and warning routes are tested with real traffic
-- [ ] End-to-end test: Alertmanager fires → OpsKnight creates incident → engineer notified
-- [ ] End-to-end test: alert resolves → OpsKnight auto-closes the incident
-- [ ] On-call schedule and escalation policy are configured and tested in OpsKnight
-- [ ] Notification channels (email/SMS/push/Slack ChatOps) verified per engineer
-- [ ] OpsKnight PostgreSQL volume is backed up on a schedule and restore has been tested
-- [ ] Logs are available and queryable in Loki
-- [ ] All dashboards are available in Grafana
-- [ ] Secrets are excluded from Git (verify `.gitignore`)
-- [ ] Engineering team is trained on OpsKnight (ack/assign/escalate/resolve) and troubleshooting procedures
-- [ ] On-call runbooks are documented and accessible (linked from alert annotations where possible)
+**Infrastructure**
+- [ ] Monitoring server has 6 GB+ RAM and 50 GB+ disk; Prometheus and Loki retention configured (30+ days recommended)
+- [ ] All images pinned (no `latest`), including `opsknight:<version>`
+- [ ] Alloy managed by systemd and configured by Ansible; production inventory separate from test
+
+**Network, TLS & domain**
+- [ ] DNS A record points to the server; only ports 80/443 are public
+- [ ] Prometheus, Alertmanager, Loki, Grafana bound to the private IP; OpsKnight app and DB on loopback
+- [ ] Valid Let's Encrypt certificate; `certbot renew --dry-run` passes; renewal timer active
+- [ ] `OPSKNIGHT_PUBLIC_URL` is the HTTPS URL; `TRUSTED_PROXY_HOPS` matches the proxy chain
+- [ ] Alertmanager can reach the webhook over HTTPS (`extra_hosts` + CA bundle)
+
+**Secrets & access**
+- [ ] `NEXTAUTH_SECRET`, `ENCRYPTION_KEY`, `API_KEY_SECRET` generated, stored securely and backed up
+- [ ] Default Postgres password changed; Grafana admin password strong; secrets excluded from Git
+- [ ] Nginx access logs restricted (the integration key is in the URL)
+
+**Alerting & incidents**
+- [ ] Alert rules documented and reviewed; critical and warning routes tested with real traffic
+- [ ] End-to-end: alert fires → incident created → engineer notified; alert resolves → incident auto-closed
+- [ ] On-call schedule and escalation policy configured and tested; channels verified per engineer
+- [ ] OpsKnight PostgreSQL volume backed up on a schedule and a restore tested
+- [ ] Logs queryable in Loki; dashboards available in Grafana
+- [ ] Runbooks linked from alert annotations; team trained on ack / assign / escalate / resolve
 - [ ] Monitoring of the monitoring system itself is in place
 
 ---
 
-## 📚 For New Engineers
+## For new engineers
 
-> **If you only remember one thing, remember this:**
->
-> **Alloy collects data → Prometheus/Loki store it → Grafana shows it → Prometheus detects problems → Alertmanager routes them → a local, self-hosted OpsKnight container turns them into tracked incidents and notifies the on-call engineer → engineers handle them in OpsKnight → OpsKnight auto-resolves the incident when the problem is fixed. Everything — including incident data — stays on our own server.**
+> **Alloy collects → Prometheus and Loki store → Grafana shows → Prometheus detects → Alertmanager routes over HTTPS → Nginx terminates TLS → OpsKnight opens and tracks the incident → the on-call engineer handles it → OpsKnight auto-resolves when the problem clears. Everything stays on our own server.**
 
-### **You will interact with four places:**
+You will work in four places:
 
-1. **Grafana** — investigate what's happening, view dashboards and drill down
-2. **Prometheus/Alertmanager** — verify metric and alert state, test alert rules, check alert history
-3. **OpsKnight** (`http://monitoring:3000` or remapped port) — acknowledge, assign, snooze, escalate, add notes, follow the incident to resolution, manage on-call schedules and escalation policies
-4. **Slack** — only for ChatOps war-room actions, since OpsKnight's own Slack app posts there; the source of truth is still OpsKnight
+1. **Grafana** (LAN/VPN): investigate and drill down
+2. **Prometheus / Alertmanager** (LAN/VPN): check metric and alert state, test rules
+3. **OpsKnight** (`https://opsknight.cherryberrycloud.com`): acknowledge, assign, snooze, escalate, follow incidents, manage on-call
+4. **Slack**: ChatOps war-room actions only. OpsKnight remains the source of truth
 
-### **Administrators use Ansible:**
+Administrators use **Ansible** to install and update Alloy fleet-wide, and also own the OpsKnight container, the Nginx/Certbot setup and the `.env` secrets.
 
-- Add or configure monitored servers
-- Install Alloy uniformly across fleet
-- Avoid manual repetition
-
-Administrators also own the **OpsKnight container itself** — its updates, backups, and `.env` secrets are separate from the Ansible-managed fleet and should be tracked accordingly.
+**Support:** check [Troubleshooting](#troubleshooting), review logs (`journalctl -u <service> -f`, `docker compose logs -f`), open an issue in this repository, or contact the platform engineering team. OpsKnight itself: [issues](https://github.com/opsknight-labs/OpsKnight/issues) · help@opsknight.com.
 
 ---
 
-## 📞 Support & Contribution
+## License & ownership
 
-For issues, improvements, or questions:
+For **Tech Bridge monitoring infrastructure**. OpsKnight is a separate Apache-2.0 project: [opsknight-labs/OpsKnight](https://github.com/opsknight-labs/OpsKnight). Add your organization's license and ownership details before making this repository public.
 
-1. Check the [Troubleshooting](#troubleshooting) section
-2. Review logs: `journalctl -u [service] -f` or `docker compose logs -f` for OpsKnight
-3. Create an issue in the repository
-4. For OpsKnight itself (bugs, feature requests, upstream questions): [opsknight-labs/OpsKnight issues](https://github.com/opsknight-labs/OpsKnight/issues) or [help@opsknight.com](mailto:help@opsknight.com)
-5. Contact the platform engineering team
-
----
-
-## 📄 License & Ownership
-
-This repository is intended for **Tech Bridge monitoring infrastructure**.
-
-OpsKnight itself is a separate open-source project, licensed Apache-2.0: [opsknight-labs/OpsKnight](https://github.com/opsknight-labs/OpsKnight).
-
-Add your organization's preferred license and operational ownership information before making this repository public.
-
----
-
-**Last Updated:** 22 sept 2026  
-**Version:** 2.1 — Local, self-hosted OpsKnight (Docker) incident management integration  
-**Maintained by:** Ahmad Raza 
+**Last updated:** 21 Oct 2026 · **Version:** 2.2 (Nginx reverse proxy, TLS and domain for local OpsKnight) · **Maintained by:** Ahmad Raza
